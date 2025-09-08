@@ -128,6 +128,27 @@ class MarkerPanel(QGroupBox):
         self.remove_button.setToolTip("Remove selected marker")
         controls_layout.addWidget(self.remove_button)
         
+        self.delete_all_button = QPushButton("🗑️ Delete All")
+        self.delete_all_button.setEnabled(False)  # Enabled when there are markers
+        self.delete_all_button.setToolTip("Delete all markers and reset counter")
+        self.delete_all_button.setStyleSheet("""
+            QPushButton {
+                background-color: #f44336;
+                color: white;
+                font-weight: bold;
+                padding: 5px;
+                border-radius: 3px;
+            }
+            QPushButton:hover {
+                background-color: #d32f2f;
+            }
+            QPushButton:disabled {
+                background-color: #cccccc;
+                color: #666666;
+            }
+        """)
+        controls_layout.addWidget(self.delete_all_button)
+        
         layout.addLayout(controls_layout)
         
         # Marker movement controls
@@ -309,6 +330,7 @@ class MarkerPanel(QGroupBox):
         self.place_at_coords_button.clicked.connect(self.place_marker_at_coordinates)
         self.edit_button.clicked.connect(self.edit_selected_marker)
         self.remove_button.clicked.connect(self.remove_selected_marker)
+        self.delete_all_button.clicked.connect(self.delete_all_markers)
         
         # Connect movement buttons
         self.up_button.clicked.connect(lambda: self.move_marker('up'))
@@ -388,9 +410,10 @@ class MarkerPanel(QGroupBox):
         )
         self.place_marker_at_position(position)
         
-    def place_marker_at_position(self, position: tuple) -> None:
-        """Place a marker at the specified position."""
+    def place_marker_at_position(self, position: tuple, normal: tuple = (0.0, 0.0, 1.0)) -> None:
+        """Place a marker at the specified position with proper orientation based on surface normal."""
         marker_id = self.next_marker_id
+        print(f"🔢 Creating marker with ID: {marker_id} (next_marker_id was: {self.next_marker_id})")
         
         # Get ArUco configuration
         dictionary = self.dict_combo.currentText()
@@ -409,6 +432,13 @@ class MarkerPanel(QGroupBox):
                 )
                 return
         
+        # Calculate marker orientation from surface normal
+        # Convert normal vector to rotation angles that align marker with surface
+        rotation = self._calculate_rotation_from_normal(normal)
+        
+        print(f"📐 Placing marker with normal: ({normal[0]:.3f}, {normal[1]:.3f}, {normal[2]:.3f})")
+        print(f"📐 Calculated rotation: ({rotation[0]:.3f}, {rotation[1]:.3f}, {rotation[2]:.3f}) rad")
+        
         # Note: The marker position becomes the origin (0,0,0) for the object coordinate system
         # This is important for robotics applications where grasp poses are relative to the marker
         
@@ -417,7 +447,8 @@ class MarkerPanel(QGroupBox):
             dictionary=dictionary,
             marker_id=aruco_id,
             position=position,
-            size=size
+            size=size,
+            rotation=rotation  # Add rotation based on surface normal
         )
         
         # Create list item
@@ -440,10 +471,62 @@ class MarkerPanel(QGroupBox):
         max_id = ArUcoGenerator.get_max_id_for_dict(dictionary)
         if aruco_id < max_id:
             self.marker_id_spinbox.setValue(aruco_id + 1)
+    
+    def _calculate_rotation_from_normal(self, normal: tuple) -> tuple:
+        """Calculate rotation angles to align marker Z-axis with surface normal."""
+        import numpy as np
         
-    def place_marker_at_clicked_position(self, position: tuple) -> None:
-        """Place a marker at a position clicked in the 3D viewer."""
-        self.place_marker_at_position(position)
+        # Convert normal to numpy array and normalize
+        n = np.array(normal)
+        n = n / (np.linalg.norm(n) + 1e-8)
+        
+        # Default marker orientation is Z-up (0, 0, 1)
+        z_axis = np.array([0.0, 0.0, 1.0])
+        
+        # If normal is already aligned with Z-axis, no rotation needed
+        if np.allclose(n, z_axis, atol=1e-6):
+            return (0.0, 0.0, 0.0)
+        
+        # If normal is opposite to Z-axis, rotate 180 degrees around X
+        if np.allclose(n, -z_axis, atol=1e-6):
+            return (np.pi, 0.0, 0.0)
+        
+        # Calculate rotation axis (cross product of z_axis and normal)
+        rotation_axis = np.cross(z_axis, n)
+        rotation_axis = rotation_axis / (np.linalg.norm(rotation_axis) + 1e-8)
+        
+        # Calculate rotation angle
+        cos_angle = np.dot(z_axis, n)
+        rotation_angle = np.arccos(np.clip(cos_angle, -1.0, 1.0))
+        
+        # Convert axis-angle to Euler angles (roll, pitch, yaw)
+        # This is a simplified approach for robotics applications
+        
+        # For face normals along primary axes, use simplified rotations
+        if np.allclose(n, [1, 0, 0], atol=1e-6):  # +X face
+            return (0.0, np.pi/2, 0.0)  # Pitch 90 degrees
+        elif np.allclose(n, [-1, 0, 0], atol=1e-6):  # -X face
+            return (0.0, -np.pi/2, 0.0)  # Pitch -90 degrees
+        elif np.allclose(n, [0, 1, 0], atol=1e-6):  # +Y face
+            return (-np.pi/2, 0.0, 0.0)  # Roll -90 degrees
+        elif np.allclose(n, [0, -1, 0], atol=1e-6):  # -Y face
+            return (np.pi/2, 0.0, 0.0)  # Roll 90 degrees
+        elif np.allclose(n, [0, 0, -1], atol=1e-6):  # -Z face
+            return (np.pi, 0.0, 0.0)  # Roll 180 degrees
+        else:
+            # For arbitrary normals, use a general approach
+            # Convert rotation axis and angle to Euler angles
+            # This is simplified - for more complex cases, quaternions would be better
+            if abs(rotation_axis[2]) > 0.9:  # Rotation mostly around Z-axis
+                return (0.0, 0.0, rotation_angle if rotation_axis[2] > 0 else -rotation_angle)
+            elif abs(rotation_axis[1]) > 0.9:  # Rotation mostly around Y-axis  
+                return (0.0, rotation_angle if rotation_axis[1] > 0 else -rotation_angle, 0.0)
+            else:  # Rotation mostly around X-axis
+                return (rotation_angle if rotation_axis[0] > 0 else -rotation_angle, 0.0, 0.0)
+        
+    def place_marker_at_clicked_position(self, position: tuple, normal: tuple = (0.0, 0.0, 1.0)) -> None:
+        """Place a marker at a position clicked in the 3D viewer with proper orientation."""
+        self.place_marker_at_position(position, normal)
         # Exit placement mode after placing
         self.cancel_placement_mode()
         
@@ -536,11 +619,21 @@ class MarkerPanel(QGroupBox):
             # Emit selection signal
             self.marker_selected.emit(current_item.marker_id)
             
-            # Update coordinate spinboxes
+            # Update coordinate spinboxes WITHOUT triggering signals
+            # Block signals to prevent unwanted position updates during selection
+            self.x_spinbox.blockSignals(True)
+            self.y_spinbox.blockSignals(True)
+            self.z_spinbox.blockSignals(True)
+            
             x, y, z = current_item.aruco_info.position
             self.x_spinbox.setValue(x)
             self.y_spinbox.setValue(y)
             self.z_spinbox.setValue(z)
+            
+            # Re-enable signals
+            self.x_spinbox.blockSignals(False)
+            self.y_spinbox.blockSignals(False)
+            self.z_spinbox.blockSignals(False)
     
     def move_marker(self, direction: str) -> None:
         """Move the selected marker in the specified direction."""
@@ -599,6 +692,9 @@ class MarkerPanel(QGroupBox):
         count = len(self.markers)
         self.stats_label.setText(f"Markers: {count}")
         
+        # Enable/disable the "Delete All" button based on whether there are markers
+        self.delete_all_button.setEnabled(count > 0)
+        
     def get_all_markers(self) -> List[Dict[str, Any]]:
         """Get all markers as a list of dictionaries."""
         return [item.get_data() for item in self.markers.values()]
@@ -656,6 +752,74 @@ class MarkerPanel(QGroupBox):
             self.marker_list.clear()
             self.markers.clear()
             self.update_stats()
+            
+    def delete_all_markers(self) -> None:
+        """Delete all markers and reset the counter to 0."""
+        if len(self.markers) == 0:
+            QMessageBox.information(
+                self,
+                "No Markers",
+                "There are no markers to delete."
+            )
+            return
+            
+        reply = QMessageBox.question(
+            self,
+            "Delete All Markers",
+            f"Delete all {len(self.markers)} markers and reset counter to 0?\n\nThis action cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No  # Default to No for safety
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            print(f"🗑️ Deleting all {len(self.markers)} markers and resetting counter...")
+            
+            # Remove all markers (emit signals for 3D viewer)
+            for marker_id in list(self.markers.keys()):
+                self.marker_removed.emit(marker_id)
+                
+            # Clear all data structures
+            self.marker_list.clear()
+            self.markers.clear()
+            
+            # Reset the counter to 0
+            self.next_marker_id = 0
+            
+            # Reset ArUco marker ID spinbox to 0
+            self.marker_id_spinbox.setValue(0)
+            
+            # Update UI
+            self.update_stats()
+            
+            print("✅ All markers deleted and counter reset to 0")
+            
+    def clear_all_markers_automatically(self) -> None:
+        """Clear all markers automatically without user confirmation (for new CAD model loading)."""
+        if len(self.markers) == 0:
+            return  # Nothing to clear
+            
+        print(f"🗑️ Automatically clearing all {len(self.markers)} markers for new CAD model...")
+        
+        # Remove all markers (emit signals for 3D viewer)
+        for marker_id in list(self.markers.keys()):
+            self.marker_removed.emit(marker_id)
+            
+        # Clear all data structures
+        self.marker_list.clear()
+        self.markers.clear()
+        
+        # Reset the counter to 0
+        self.next_marker_id = 0
+        print(f"🔢 Counter reset to: {self.next_marker_id}")
+        
+        # Reset ArUco marker ID spinbox to 0
+        self.marker_id_spinbox.setValue(0)
+        print(f"🔢 ArUco marker ID spinbox reset to: 0")
+        
+        # Update UI
+        self.update_stats()
+        
+        print("✅ All markers cleared and counter reset to 0 for new CAD model")
             
     def get_selected_marker_id(self) -> int:
         """Get the ID of the currently selected marker."""

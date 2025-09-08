@@ -312,6 +312,9 @@ class MainWindow(QMainWindow):
             try:
                 self.current_file = Path(file_path)
                 
+                # Clear all existing markers and reset counter for new CAD model
+                self.marker_panel.clear_all_markers_automatically()
+                
                 # Get selected units
                 selected_units = self.unit_combo.currentText()
                 if selected_units == "Auto-detect":
@@ -353,8 +356,8 @@ class MainWindow(QMainWindow):
                 # Reset annotation manager
                 self.annotation_manager.set_model_file(self.current_file)
                 
-                # Show dimension confirmation dialog
-                self.show_dimension_info(mesh_info)
+                # Model information is now displayed inline in the working viewer
+                # No popup needed - dimensions are shown in the status area
                 
             except Exception as e:
                 error_msg = f"Could not load file: {str(e)}"
