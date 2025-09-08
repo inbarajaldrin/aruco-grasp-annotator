@@ -109,12 +109,21 @@ class FacePickerDialog(QWidget):
         """Populate the face list with actual faces (not individual triangles)."""
         print(f"Analyzing {len(self.triangles)} triangles to find actual faces...")
         print("NOTE: Algorithm finds faces DYNAMICALLY - it will find as many faces as exist in your model!")
+        print(f"Mesh type: {type(self.mesh).__name__ if hasattr(self, 'mesh') else 'Unknown'}")
 
         # Group triangles by their normal vectors to find actual faces
         face_groups = self.group_triangles_by_face()
 
         print(f"Algorithm found {len(face_groups)} actual faces (not hardcoded!)")
         print("Each face is made up of triangles pointing in the same direction.")
+        
+        # Additional debugging for complex shapes
+        if len(face_groups) > 10:
+            print(f"⚠️  Complex shape detected with {len(face_groups)} faces!")
+            print("This might be a detailed model with many small faces.")
+        elif len(face_groups) < 4:
+            print(f"⚠️  Simple shape detected with only {len(face_groups)} faces!")
+            print("This might be a basic geometric shape.")
         
         for face_idx, (face_center, face_normal, face_area, triangle_indices) in enumerate(face_groups):
             # Determine face orientation
@@ -135,75 +144,147 @@ class FacePickerDialog(QWidget):
         print(f"Added {self.face_list.count()} faces to the list")
         
     def group_triangles_by_face(self):
-        """Group triangles that belong to the same face based on normal vectors."""
+        """Improved face detection algorithm using normal vectors, spatial connectivity, and coplanarity."""
+        print("🔍 Starting improved face detection algorithm...")
+        print(f"Processing {len(self.triangles)} triangles...")
+        
         face_groups = []
-        normal_tolerance = 0.1  # Tolerance for grouping normals
+        normal_tolerance = 0.02  # Tighter tolerance for better precision
+        spatial_threshold = 0.1  # Maximum distance between triangle centers to consider them connected
+        min_face_area = 1e-6  # Minimum area to consider a valid face
         
-        # Calculate normals for all triangles
-        triangle_normals = []
-        triangle_centers = []
-        triangle_areas = []
-        
+        # Calculate triangle properties
+        triangle_data = []
         for i, triangle in enumerate(self.triangles):
             v1, v2, v3 = self.vertices[triangle[0]], self.vertices[triangle[1]], self.vertices[triangle[2]]
             
-            # Calculate normal
-            normal = np.cross(v2 - v1, v3 - v1)
+            # Calculate normal (ensure consistent orientation)
+            edge1 = v2 - v1
+            edge2 = v3 - v1
+            normal = np.cross(edge1, edge2)
+            area = 0.5 * np.linalg.norm(normal)
             normal = normal / (np.linalg.norm(normal) + 1e-8)  # Normalize
             
-            # Calculate center and area
+            # Calculate center and plane equation (ax + by + cz + d = 0)
             center = (v1 + v2 + v3) / 3.0
-            area = 0.5 * np.linalg.norm(np.cross(v2 - v1, v3 - v1))
+            plane_d = -np.dot(normal, center)
             
-            triangle_normals.append(normal)
-            triangle_centers.append(center)
-            triangle_areas.append(area)
+            triangle_data.append({
+                'vertices': (v1, v2, v3),
+                'center': center,
+                'normal': normal,
+                'area': area,
+                'plane_d': plane_d,
+                'triangle_idx': i
+            })
         
-        # Group triangles by similar normals
         used_triangles = set()
-
-        print(f"Starting face detection algorithm...")
-        print(f"Total triangles to process: {len(triangle_normals)}")
-        print(f"Algorithm will find ALL faces based on normal vectors - NO hardcoded limit!")
-
-        for i, normal in enumerate(triangle_normals):
-            if i in used_triangles:
+        
+        # Sort triangles by area (largest first) to prioritize major faces
+        sorted_indices = sorted(range(len(triangle_data)), key=lambda i: triangle_data[i]['area'], reverse=True)
+        
+        for idx in sorted_indices:
+            if idx in used_triangles:
                 continue
                 
-            # Find all triangles with similar normals
-            group_triangles = [i]
-            group_centers = [triangle_centers[i]]
-            group_areas = [triangle_areas[i]]
-            used_triangles.add(i)
+            seed_triangle = triangle_data[idx]
+            if seed_triangle['area'] < min_face_area:
+                continue
+                
+            # Start a new face group
+            face_triangles = [idx]
+            face_queue = [idx]
+            used_triangles.add(idx)
             
-            for j, other_normal in enumerate(triangle_normals):
-                if j in used_triangles:
-                    continue
+            # Grow the face by finding connected triangles with similar properties
+            while face_queue:
+                current_idx = face_queue.pop(0)
+                current_triangle = triangle_data[current_idx]
+                
+                # Check all remaining triangles for membership in this face
+                for j, candidate in enumerate(triangle_data):
+                    if j in used_triangles:
+                        continue
                     
-                # Check if normals are similar (dot product close to 1)
-                dot_product = np.dot(normal, other_normal)
-                if dot_product > (1.0 - normal_tolerance):
-                    group_triangles.append(j)
-                    group_centers.append(triangle_centers[j])
-                    group_areas.append(triangle_areas[j])
-                    used_triangles.add(j)
+                    # Check 1: Normal similarity (dot product)
+                    normal_similarity = np.dot(current_triangle['normal'], candidate['normal'])
+                    if normal_similarity < (1.0 - normal_tolerance):
+                        continue
+                    
+                    # Check 2: Coplanarity (distance to plane)
+                    point_to_plane_dist = abs(np.dot(candidate['normal'], current_triangle['center']) + current_triangle['plane_d'])
+                    if point_to_plane_dist > spatial_threshold * 0.1:  # Very strict coplanarity check
+                        continue
+                    
+                    # Check 3: Spatial proximity (at least one triangle in face should be close)
+                    is_spatially_connected = False
+                    for face_tri_idx in face_triangles:
+                        face_center = triangle_data[face_tri_idx]['center']
+                        distance = np.linalg.norm(candidate['center'] - face_center)
+                        if distance < spatial_threshold:
+                            is_spatially_connected = True
+                            break
+                    
+                    if not is_spatially_connected:
+                        continue
+                    
+                    # Check 4: Edge connectivity (share vertices or are very close)
+                    is_edge_connected = self._triangles_share_edge_or_vertex(
+                        self.triangles[current_idx], self.triangles[j]
+                    )
+                    
+                    if is_edge_connected or self._triangles_are_adjacent(
+                        current_triangle['vertices'], candidate['vertices'], spatial_threshold * 0.5
+                    ):
+                        # Add to face
+                        face_triangles.append(j)
+                        face_queue.append(j)
+                        used_triangles.add(j)
             
             # Calculate face properties
-            face_center = np.mean(group_centers, axis=0)
-            face_area = sum(group_areas)
-
-            print(f"Face {len(face_groups)+1}: {len(group_triangles)} triangles, center=({face_center[0]:.3f}, {face_center[1]:.3f}, {face_center[2]:.3f}), area={face_area:.4f}")
-
-            face_groups.append((face_center, normal, face_area, group_triangles))
+            if len(face_triangles) > 0:
+                face_centers = [triangle_data[i]['center'] for i in face_triangles]
+                face_areas = [triangle_data[i]['area'] for i in face_triangles]
+                face_normals = [triangle_data[i]['normal'] for i in face_triangles]
+                
+                # Use area-weighted average for face center and normal
+                total_area = sum(face_areas)
+                if total_area > min_face_area:
+                    face_center = np.average(face_centers, axis=0, weights=face_areas)
+                    face_normal = np.average(face_normals, axis=0, weights=face_areas)
+                    face_normal = face_normal / (np.linalg.norm(face_normal) + 1e-8)
+                    
+                    face_groups.append((face_center, face_normal, total_area, face_triangles))
+                    print(f"✅ Face {len(face_groups)}: {len(face_triangles)} triangles, area={total_area:.6f}")
+        
+        print(f"🎯 Found {len(face_groups)} distinct faces using improved algorithm")
+        
+        # Sort faces by area (largest first) for consistent ordering
+        face_groups.sort(key=lambda x: x[2], reverse=True)
         
         return face_groups
+    
+    def _triangles_share_edge_or_vertex(self, tri1, tri2):
+        """Check if two triangles share an edge or vertex."""
+        tri1_verts = set(tri1)
+        tri2_verts = set(tri2)
+        shared_vertices = tri1_verts.intersection(tri2_verts)
+        return len(shared_vertices) >= 1  # Share at least one vertex
+    
+    def _triangles_are_adjacent(self, tri1_verts, tri2_verts, threshold):
+        """Check if triangles are spatially adjacent (vertices are very close)."""
+        for v1 in tri1_verts:
+            for v2 in tri2_verts:
+                if np.linalg.norm(v1 - v2) < threshold:
+                    return True
+        return False
     
     def get_face_name(self, normal):
         """Get a descriptive name for the face based on its normal vector."""
         # Normalize the normal vector
         normal = normal / (np.linalg.norm(normal) + 1e-8)
         
-        # Define primary directions
+        # Define primary directions with more tolerance
         directions = {
             'Top': np.array([0, 0, 1]),
             'Bottom': np.array([0, 0, -1]),
@@ -222,6 +303,18 @@ class FacePickerDialog(QWidget):
             if similarity > best_similarity:
                 best_similarity = similarity
                 best_match = name
+        
+        # If similarity is low, use coordinate-based naming
+        if best_similarity < 0.7:  # Not well aligned with standard directions
+            # Create a more descriptive name based on normal components
+            x, y, z = normal
+            if abs(x) > abs(y) and abs(x) > abs(z):
+                direction = "X" if x > 0 else "-X"
+            elif abs(y) > abs(z):
+                direction = "Y" if y > 0 else "-Y"
+            else:
+                direction = "Z" if z > 0 else "-Z"
+            return f"Face ({direction})"
         
         return f"{best_match} Face"
         

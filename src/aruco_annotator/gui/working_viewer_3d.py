@@ -22,7 +22,7 @@ class WorkingViewer3D(QWidget):
     # Signals
     marker_clicked = pyqtSignal(int)
     grasp_clicked = pyqtSignal(int)
-    point_picked = pyqtSignal(tuple)
+    point_picked = pyqtSignal(tuple, tuple)  # (position, normal)
     
     def __init__(self) -> None:
         super().__init__()
@@ -302,9 +302,15 @@ class WorkingViewer3D(QWidget):
             vertices_count = mesh_info.get('vertices', 0)
             triangles_count = mesh_info.get('triangles', 0)
             
-            status_text = f"Model loaded successfully\\n"
-            status_text += f"Dimensions: {dims['length']:.3f} × {dims['width']:.3f} × {dims['height']:.3f} m\\n"
-            status_text += f"Vertices: {vertices_count:,} | Faces: {triangles_count:,}"
+            status_text = f"✅ Model loaded successfully\\n"
+            status_text += f"📐 Dimensions: {dims['length']:.3f} × {dims['width']:.3f} × {dims['height']:.3f} m\\n"
+            status_text += f"🔺 Geometry: {vertices_count:,} vertices | {triangles_count:,} faces"
+            
+            # Add volume and surface area if available
+            if 'volume' in mesh_info and mesh_info['volume'] > 0:
+                status_text += f"\\n📊 Volume: {mesh_info['volume']:.4f} m³"
+            if 'surface_area' in mesh_info and mesh_info['surface_area'] > 0:
+                status_text += f" | Surface: {mesh_info['surface_area']:.4f} m²"
         else:
             status_text = "Model loaded successfully"
         
@@ -995,6 +1001,8 @@ Watertight: {info['is_watertight']}"""
         if hasattr(self, 'click_place_btn') and self.click_place_btn is not None:
             self.click_place_btn.setVisible(True)
             self.face_picker_btn.setVisible(True)
+            if hasattr(self, 'all_sides_btn') and self.all_sides_btn is not None:
+                self.all_sides_btn.setVisible(True)
         elif not hasattr(self, 'click_place_btn') or self.click_place_btn is None:
             # Create the alternative placement buttons now
             self.setup_alternative_placement()
@@ -1046,6 +1054,142 @@ Watertight: {info['is_watertight']}"""
         # Calculate the centroid (center) of the triangle
         center = (v1 + v2 + v3) / 3.0
         return tuple(center)
+    
+    def group_triangles_by_face(self, triangles, vertices):
+        """Improved face detection algorithm using normal vectors, spatial connectivity, and coplanarity."""
+        print("🔍 Starting improved face detection algorithm...")
+        print(f"Processing {len(triangles)} triangles...")
+        
+        face_groups = []
+        normal_tolerance = 0.02  # Tighter tolerance for better precision
+        spatial_threshold = 0.1  # Maximum distance between triangle centers to consider them connected
+        min_face_area = 1e-6  # Minimum area to consider a valid face
+        
+        # Calculate triangle properties
+        triangle_data = []
+        for i, triangle in enumerate(triangles):
+            v1, v2, v3 = vertices[triangle[0]], vertices[triangle[1]], vertices[triangle[2]]
+            
+            # Calculate normal (ensure consistent orientation)
+            edge1 = v2 - v1
+            edge2 = v3 - v1
+            normal = np.cross(edge1, edge2)
+            area = 0.5 * np.linalg.norm(normal)
+            normal = normal / (np.linalg.norm(normal) + 1e-8)  # Normalize
+            
+            # Calculate center and plane equation (ax + by + cz + d = 0)
+            center = (v1 + v2 + v3) / 3.0
+            plane_d = -np.dot(normal, center)
+            
+            triangle_data.append({
+                'vertices': (v1, v2, v3),
+                'center': center,
+                'normal': normal,
+                'area': area,
+                'plane_d': plane_d,
+                'triangle_idx': i
+            })
+        
+        used_triangles = set()
+        
+        # Sort triangles by area (largest first) to prioritize major faces
+        sorted_indices = sorted(range(len(triangle_data)), key=lambda i: triangle_data[i]['area'], reverse=True)
+        
+        for idx in sorted_indices:
+            if idx in used_triangles:
+                continue
+                
+            seed_triangle = triangle_data[idx]
+            if seed_triangle['area'] < min_face_area:
+                continue
+                
+            # Start a new face group
+            face_triangles = [idx]
+            face_queue = [idx]
+            used_triangles.add(idx)
+            
+            # Grow the face by finding connected triangles with similar properties
+            while face_queue:
+                current_idx = face_queue.pop(0)
+                current_triangle = triangle_data[current_idx]
+                
+                # Check all remaining triangles for membership in this face
+                for j, candidate in enumerate(triangle_data):
+                    if j in used_triangles:
+                        continue
+                    
+                    # Check 1: Normal similarity (dot product)
+                    normal_similarity = np.dot(current_triangle['normal'], candidate['normal'])
+                    if normal_similarity < (1.0 - normal_tolerance):
+                        continue
+                    
+                    # Check 2: Coplanarity (distance to plane)
+                    point_to_plane_dist = abs(np.dot(candidate['normal'], current_triangle['center']) + current_triangle['plane_d'])
+                    if point_to_plane_dist > spatial_threshold * 0.1:  # Very strict coplanarity check
+                        continue
+                    
+                    # Check 3: Spatial proximity (at least one triangle in face should be close)
+                    is_spatially_connected = False
+                    for face_tri_idx in face_triangles:
+                        face_center = triangle_data[face_tri_idx]['center']
+                        distance = np.linalg.norm(candidate['center'] - face_center)
+                        if distance < spatial_threshold:
+                            is_spatially_connected = True
+                            break
+                    
+                    if not is_spatially_connected:
+                        continue
+                    
+                    # Check 4: Edge connectivity (share vertices or are very close)
+                    is_edge_connected = self._triangles_share_edge_or_vertex(
+                        triangles[current_idx], triangles[j], vertices
+                    )
+                    
+                    if is_edge_connected or self._triangles_are_adjacent(
+                        current_triangle['vertices'], candidate['vertices'], spatial_threshold * 0.5
+                    ):
+                        # Add to face
+                        face_triangles.append(j)
+                        face_queue.append(j)
+                        used_triangles.add(j)
+            
+            # Calculate face properties
+            if len(face_triangles) > 0:
+                face_centers = [triangle_data[i]['center'] for i in face_triangles]
+                face_areas = [triangle_data[i]['area'] for i in face_triangles]
+                face_normals = [triangle_data[i]['normal'] for i in face_triangles]
+                
+                # Use area-weighted average for face center and normal
+                total_area = sum(face_areas)
+                if total_area > min_face_area:
+                    face_center = np.average(face_centers, axis=0, weights=face_areas)
+                    face_normal = np.average(face_normals, axis=0, weights=face_areas)
+                    face_normal = face_normal / (np.linalg.norm(face_normal) + 1e-8)
+                    
+                    face_groups.append((face_center, face_normal, total_area, face_triangles))
+                    print(f"✅ Face {len(face_groups)}: {len(face_triangles)} triangles, area={total_area:.6f}")
+        
+        print(f"🎯 Found {len(face_groups)} distinct faces using improved algorithm")
+        
+        # Sort faces by area (largest first) for consistent ordering
+        face_groups.sort(key=lambda x: x[2], reverse=True)
+        
+        return face_groups
+    
+    def _triangles_share_edge_or_vertex(self, tri1, tri2, vertices):
+        """Check if two triangles share an edge or vertex."""
+        tri1_verts = set(tri1)
+        tri2_verts = set(tri2)
+        shared_vertices = tri1_verts.intersection(tri2_verts)
+        return len(shared_vertices) >= 1  # Share at least one vertex
+    
+    def _triangles_are_adjacent(self, tri1_verts, tri2_verts, threshold):
+        """Check if triangles are spatially adjacent (vertices are very close)."""
+        for v1 in tri1_verts:
+            for v2 in tri2_verts:
+                if np.linalg.norm(v1 - v2) < threshold:
+                    return True
+        return False
     
     def pick_face_with_raycast(self, x: int, y: int) -> tuple:
         """Use ray casting to find the actual clicked face center."""
@@ -1129,13 +1273,13 @@ Watertight: {info['is_watertight']}"""
                             
                             if face_center:
                                 # Use QTimer to emit signal from main thread
-                                QTimer.singleShot(0, lambda: self.point_picked.emit(face_center))
+                                QTimer.singleShot(0, lambda: self.point_picked.emit(face_center, (0.0, 0.0, 1.0)))
                                 print(f"Placed marker at face center: {face_center}")
                         else:
                             # Fallback to bbox center if no triangles
                             bbox = self.mesh.get_axis_aligned_bounding_box()
                             center = bbox.get_center()
-                            QTimer.singleShot(0, lambda: self.point_picked.emit(tuple(center)))
+                            QTimer.singleShot(0, lambda: self.point_picked.emit(tuple(center), (0.0, 0.0, 1.0)))
                     except Exception as e:
                         print(f"Error in face picking: {e}")
             return False
@@ -1192,6 +1336,10 @@ Watertight: {info['is_watertight']}"""
         self.face_picker_btn.setVisible(False)
         self.face_picker_btn.clicked.connect(self.open_face_picker)
 
+        self.all_sides_btn = QPushButton("📦 Add ArUco on 6 Faces")
+        self.all_sides_btn.setVisible(False)
+        self.all_sides_btn.clicked.connect(self.place_markers_on_all_faces)
+
         # Live face selection removed per user request
         # Style all buttons
         random_button_style = """
@@ -1216,9 +1364,11 @@ Watertight: {info['is_watertight']}"""
         """
 
         list_button_style = random_button_style.replace('#ff9800', '#2196F3').replace('#e68900', '#1976D2').replace('#d68100', '#1565C0')
+        all_sides_button_style = random_button_style.replace('#ff9800', '#4CAF50').replace('#e68900', '#45a049').replace('#d68100', '#3d8b40')
 
         self.click_place_btn.setStyleSheet(random_button_style)
         self.face_picker_btn.setStyleSheet(list_button_style)
+        self.all_sides_btn.setStyleSheet(all_sides_button_style)
         
         # Add all buttons to the layout
         if hasattr(self, 'layout') and self.layout():
@@ -1229,37 +1379,347 @@ Watertight: {info['is_watertight']}"""
                 if item and hasattr(item, 'changeSize'):  # This is the stretch
                     main_layout.insertWidget(i, self.click_place_btn)
                     main_layout.insertWidget(i+1, self.face_picker_btn)
+                    main_layout.insertWidget(i+2, self.all_sides_btn)
                     break
             else:
                 # If no stretch found, just add at the end
                 main_layout.addWidget(self.click_place_btn)
                 main_layout.addWidget(self.face_picker_btn)
+                main_layout.addWidget(self.all_sides_btn)
     
     def place_marker_at_surface(self) -> None:
-        """Place a marker at a calculated surface position."""
+        """Place a marker at a random face center (using grouped faces, not individual triangles)."""
         if self.placement_mode and self.mesh is not None:
             try:
                 triangles = np.asarray(self.mesh.triangles)
+                vertices = np.asarray(self.mesh.vertices)
+                
                 if len(triangles) > 0:
-                    # Pick a triangle face center
-                    import random
-                    triangle_idx = random.randint(0, len(triangles) - 1)
-                    face_center = self.calculate_face_center_from_triangle(triangle_idx)
+                    # Group triangles into actual faces (same algorithm as Face Picker)
+                    face_groups = self.group_triangles_by_face(triangles, vertices)
                     
-                    if face_center:
-                        self.point_picked.emit(face_center)
-                        print(f"Marker placed at face center: {face_center}")
+                    if len(face_groups) > 0:
+                        # Pick a random face from the grouped faces
+                        import random
+                        face_idx = random.randint(0, len(face_groups) - 1)
+                        face_center, face_normal, face_area, triangle_indices = face_groups[face_idx]
+                        
+                        print(f"🎯 Random face selected: Face {face_idx + 1} of {len(face_groups)}")
+                        print(f"   Face center: ({face_center[0]:.3f}, {face_center[1]:.3f}, {face_center[2]:.3f})")
+                        print(f"   Face area: {face_area:.4f}")
+                        print(f"   Triangles in face: {len(triangle_indices)}")
+                        
+                        self.point_picked.emit(tuple(face_center), (0.0, 0.0, 1.0))
+                        print(f"✅ Marker placed at random face center: {face_center}")
                         
                         # Hide the placement button
                         if hasattr(self, 'click_place_btn') and self.click_place_btn is not None:
                             self.click_place_btn.setVisible(False)
+                    else:
+                        print("⚠️ No faces found, falling back to random triangle")
+                        # Fallback to old behavior if no faces found
+                        triangle_idx = random.randint(0, len(triangles) - 1)
+                        face_center = self.calculate_face_center_from_triangle(triangle_idx)
+                        if face_center:
+                            self.point_picked.emit(face_center, (0.0, 0.0, 1.0))
+                            print(f"Marker placed at triangle center: {face_center}")
                 else:
                     # Fallback to bbox center
                     bbox = self.mesh.get_axis_aligned_bounding_box()
                     center = bbox.get_center()
-                    self.point_picked.emit(tuple(center))
+                    self.point_picked.emit(tuple(center), (0.0, 0.0, 1.0))
             except Exception as e:
-                print(f"Error in alternative placement: {e}")
+                print(f"Error in random face placement: {e}")
+    
+    def place_markers_on_all_faces(self) -> None:
+        """Place ArUco markers on the 6 primary orthogonal faces using CAD model dimensions and face centers."""
+        if self.placement_mode and self.mesh is not None:
+            try:
+                print("🎯 Placing ArUco markers on 6 primary faces using CAD model dimensions...")
+                
+                # Use stored CAD dimensions if available, otherwise fallback to runtime bounding box
+                if self.mesh_info and 'dimensions' in self.mesh_info:
+                    # Use the original CAD model dimensions (already converted to meters)
+                    cad_dims = self.mesh_info['dimensions']
+                    bbox_min = np.array(self.mesh_info['bbox_min'])
+                    bbox_max = np.array(self.mesh_info['bbox_max'])
+                    center = (bbox_min + bbox_max) / 2.0
+                    
+                    print(f"   Using CAD model dimensions:")
+                    print(f"   Length (X): {cad_dims['length']:.3f} m")
+                    print(f"   Width (Y):  {cad_dims['width']:.3f} m") 
+                    print(f"   Height (Z): {cad_dims['height']:.3f} m")
+                    print(f"   CAD Center: ({center[0]:.3f}, {center[1]:.3f}, {center[2]:.3f})")
+                    
+                    min_bound = bbox_min
+                    max_bound = bbox_max
+                else:
+                    # Fallback to runtime bounding box calculation
+                    print("   Warning: No CAD dimensions found, using runtime bounding box")
+                    bbox = self.mesh.get_axis_aligned_bounding_box()
+                    min_bound = bbox.get_min_bound()
+                    max_bound = bbox.get_max_bound()
+                    center = bbox.get_center()
+                    
+                    print(f"   Runtime bounding box: min=({min_bound[0]:.3f}, {min_bound[1]:.3f}, {min_bound[2]:.3f})")
+                    print(f"   Runtime bounding box: max=({max_bound[0]:.3f}, {max_bound[1]:.3f}, {max_bound[2]:.3f})")
+                    print(f"   Runtime center: ({center[0]:.3f}, {center[1]:.3f}, {center[2]:.3f})")
+                
+                # Define the 6 orthogonal faces with their normal vectors
+                faces = [
+                    # X-axis faces (Left and Right)
+                    {
+                        'center': np.array([min_bound[0], center[1], center[2]]),
+                        'normal': np.array([-1.0, 0.0, 0.0]),
+                        'name': "Left Face (-X)"
+                    },
+                    {
+                        'center': np.array([max_bound[0], center[1], center[2]]),
+                        'normal': np.array([1.0, 0.0, 0.0]),
+                        'name': "Right Face (+X)"
+                    },
+                    
+                    # Y-axis faces (Front and Back)
+                    {
+                        'center': np.array([center[0], min_bound[1], center[2]]),
+                        'normal': np.array([0.0, -1.0, 0.0]),
+                        'name': "Front Face (-Y)"
+                    },
+                    {
+                        'center': np.array([center[0], max_bound[1], center[2]]),
+                        'normal': np.array([0.0, 1.0, 0.0]),
+                        'name': "Back Face (+Y)"
+                    },
+                    
+                    # Z-axis faces (Bottom and Top)
+                    {
+                        'center': np.array([center[0], center[1], min_bound[2]]),
+                        'normal': np.array([0.0, 0.0, -1.0]),
+                        'name': "Bottom Face (-Z)"
+                    },
+                    {
+                        'center': np.array([center[0], center[1], max_bound[2]]),
+                        'normal': np.array([0.0, 0.0, 1.0]),
+                        'name': "Top Face (+Z)"
+                    }
+                ]
+                
+                # Get mesh data for ray projection
+                triangles = np.asarray(self.mesh.triangles)
+                vertices = np.asarray(self.mesh.vertices)
+                
+                markers_placed = 0
+                
+                for face in faces:
+                    # Project from the face center to the actual surface
+                    surface_point = self._project_to_surface_with_raycast(
+                        face['center'], face['normal'], triangles, vertices
+                    )
+                    
+                    if surface_point is not None:
+                        print(f"   {face['name']}: Surface point at ({surface_point[0]:.3f}, {surface_point[1]:.3f}, {surface_point[2]:.3f})")
+                        print(f"   {face['name']}: Face normal: ({face['normal'][0]:.3f}, {face['normal'][1]:.3f}, {face['normal'][2]:.3f})")
+                        
+                        # Emit the point_picked signal with position and normal for proper orientation
+                        self.point_picked.emit(tuple(surface_point), tuple(face['normal']))
+                        markers_placed += 1
+                    else:
+                        print(f"   ⚠️ {face['name']}: Could not find surface point")
+                
+                print(f"✅ Successfully placed {markers_placed}/6 ArUco markers on face centers!")
+                
+                # Show summary of dimensions used
+                if self.mesh_info and 'dimensions' in self.mesh_info:
+                    cad_dims = self.mesh_info['dimensions']
+                    print(f"📐 Used CAD model dimensions: {cad_dims['length']:.3f} × {cad_dims['width']:.3f} × {cad_dims['height']:.3f} m")
+                    if 'volume' in self.mesh_info and self.mesh_info['volume'] > 0:
+                        print(f"📊 Model volume: {self.mesh_info['volume']:.6f} m³")
+                    if 'surface_area' in self.mesh_info and self.mesh_info['surface_area'] > 0:
+                        print(f"📊 Surface area: {self.mesh_info['surface_area']:.6f} m²")
+                else:
+                    print("⚠️ Used runtime bounding box (CAD dimensions not available)")
+                
+                # Hide the placement buttons after placing all markers
+                if hasattr(self, 'click_place_btn') and self.click_place_btn is not None:
+                    self.click_place_btn.setVisible(False)
+                if hasattr(self, 'face_picker_btn') and self.face_picker_btn is not None:
+                    self.face_picker_btn.setVisible(False)
+                if hasattr(self, 'all_sides_btn') and self.all_sides_btn is not None:
+                    self.all_sides_btn.setVisible(False)
+                    
+            except Exception as e:
+                print(f"Error placing markers on 6 faces: {e}")
+        else:
+            print("⚠️ Not in placement mode or no mesh loaded")
+    
+    def _project_to_surface_with_raycast(self, face_center, face_normal, triangles, vertices):
+        """Project from face center to the actual surface using ray casting."""
+        try:
+            print(f"     Ray casting from face center to surface...")
+            
+            # Cast ray from face center inward along the negative normal
+            ray_origin = face_center
+            ray_direction = -face_normal  # Point inward toward the object
+            
+            # Find intersection with mesh triangles
+            intersection_point = self._ray_triangle_intersection(
+                ray_origin, ray_direction, triangles, vertices
+            )
+            
+            if intersection_point is not None:
+                print(f"     Ray intersection found at distance {np.linalg.norm(intersection_point - ray_origin):.3f}")
+                return intersection_point
+            
+            # Fallback 1: Try ray in opposite direction (outward)
+            ray_direction = face_normal  # Point outward from the object
+            intersection_point = self._ray_triangle_intersection(
+                ray_origin, ray_direction, triangles, vertices
+            )
+            
+            if intersection_point is not None:
+                print(f"     Reverse ray intersection found at distance {np.linalg.norm(intersection_point - ray_origin):.3f}")
+                return intersection_point
+            
+            # Fallback 2: Find closest surface point using triangle analysis
+            print(f"     No ray intersection found, finding closest surface point...")
+            return self._find_closest_surface_point(face_center, face_normal, triangles, vertices)
+                
+        except Exception as e:
+            print(f"Error in surface projection: {e}")
+            return self._find_closest_surface_point(face_center, face_normal, triangles, vertices)
+    
+    def _ray_triangle_intersection(self, ray_origin, ray_direction, triangles, vertices):
+        """Find the closest ray-triangle intersection."""
+        closest_distance = float('inf')
+        closest_point = None
+        
+        for triangle in triangles:
+            v0, v1, v2 = vertices[triangle[0]], vertices[triangle[1]], vertices[triangle[2]]
+            
+            # Möller-Trumbore ray-triangle intersection algorithm
+            edge1 = v1 - v0
+            edge2 = v2 - v0
+            h = np.cross(ray_direction, edge2)
+            a = np.dot(edge1, h)
+            
+            if -1e-8 < a < 1e-8:  # Ray is parallel to triangle
+                continue
+                
+            f = 1.0 / a
+            s = ray_origin - v0
+            u = f * np.dot(s, h)
+            
+            if u < 0.0 or u > 1.0:
+                continue
+                
+            q = np.cross(s, edge1)
+            v = f * np.dot(ray_direction, q)
+            
+            if v < 0.0 or u + v > 1.0:
+                continue
+                
+            # Calculate intersection distance
+            t = f * np.dot(edge2, q)
+            
+            if t > 1e-8 and t < closest_distance:  # Valid intersection
+                closest_distance = t
+                closest_point = ray_origin + t * ray_direction
+        
+        return closest_point
+    
+    def _find_closest_surface_point(self, target_point, face_normal, triangles, vertices):
+        """Find the closest point on the mesh surface to the target point."""
+        try:
+            closest_distance = float('inf')
+            closest_point = None
+            
+            # Check all triangles for the closest surface point
+            for triangle in triangles:
+                v0, v1, v2 = vertices[triangle[0]], vertices[triangle[1]], vertices[triangle[2]]
+                
+                # Calculate triangle normal
+                tri_normal = np.cross(v1 - v0, v2 - v0)
+                tri_normal = tri_normal / (np.linalg.norm(tri_normal) + 1e-8)
+                
+                # Check if triangle normal is roughly aligned with face normal
+                normal_alignment = abs(np.dot(tri_normal, face_normal))
+                if normal_alignment < 0.7:  # Not aligned enough
+                    continue
+                
+                # Find closest point on triangle to target point
+                triangle_point = self._closest_point_on_triangle(target_point, v0, v1, v2)
+                distance = np.linalg.norm(triangle_point - target_point)
+                
+                if distance < closest_distance:
+                    closest_distance = distance
+                    closest_point = triangle_point
+            
+            if closest_point is not None:
+                print(f"     Found closest surface point at distance {closest_distance:.3f}")
+                return closest_point
+            else:
+                # Final fallback: closest vertex
+                vertex_distances = np.linalg.norm(vertices - target_point, axis=1)
+                closest_idx = np.argmin(vertex_distances)
+                print(f"     Using closest vertex at distance {vertex_distances[closest_idx]:.3f}")
+                return vertices[closest_idx]
+                
+        except Exception as e:
+            print(f"Error finding closest surface point: {e}")
+            return target_point
+    
+    def _closest_point_on_triangle(self, p, a, b, c):
+        """Find the closest point on triangle ABC to point P."""
+        # Vectors
+        ab = b - a
+        ac = c - a
+        ap = p - a
+        
+        # Compute parametric coordinates
+        d1 = np.dot(ab, ap)
+        d2 = np.dot(ac, ap)
+        
+        # Check if P is on vertex A side
+        if d1 <= 0.0 and d2 <= 0.0:
+            return a
+        
+        # Check if P is on vertex B side
+        bp = p - b
+        d3 = np.dot(ab, bp)
+        d4 = np.dot(ac, bp)
+        if d3 >= 0.0 and d4 <= d3:
+            return b
+        
+        # Check if P is on vertex C side
+        cp = p - c
+        d5 = np.dot(ab, cp)
+        d6 = np.dot(ac, cp)
+        if d6 >= 0.0 and d5 <= d6:
+            return c
+        
+        # Check if P is on edge AB
+        vc = d1 * d4 - d3 * d2
+        if vc <= 0.0 and d1 >= 0.0 and d3 <= 0.0:
+            v = d1 / (d1 - d3)
+            return a + v * ab
+        
+        # Check if P is on edge AC
+        vb = d5 * d2 - d1 * d6
+        if vb <= 0.0 and d2 >= 0.0 and d6 <= 0.0:
+            w = d2 / (d2 - d6)
+            return a + w * ac
+        
+        # Check if P is on edge BC
+        va = d3 * d6 - d5 * d4
+        if va <= 0.0 and (d4 - d3) >= 0.0 and (d5 - d6) >= 0.0:
+            w = (d4 - d3) / ((d4 - d3) + (d5 - d6))
+            return b + w * (c - b)
+        
+        # P is inside the triangle
+        denom = 1.0 / (va + vb + vc)
+        v = vb * denom
+        w = vc * denom
+        return a + ab * v + ac * w
     
     def open_face_picker(self) -> None:
         """Open a dialog to let user choose a specific face."""
@@ -1283,7 +1743,7 @@ Watertight: {info['is_watertight']}"""
                 selected_face_center = dialog.get_selected_face_center()
                 if selected_face_center:
                     print(f"User selected face center: {selected_face_center}")
-                    self.point_picked.emit(selected_face_center)
+                    self.point_picked.emit(selected_face_center, (0.0, 0.0, 1.0))
                     
                     # Hide the placement buttons
                     if hasattr(self, 'click_place_btn') and self.click_place_btn is not None:
@@ -1329,7 +1789,7 @@ Watertight: {info['is_watertight']}"""
             print(f"Selected face center: ({face_center[0]:.3f}, {face_center[1]:.3f}, {face_center[2]:.3f})")
             print(f"Selected face area: {face_area:.4f}")
             # Place marker at the face center
-            self.point_picked.emit(tuple(face_center))
+            self.point_picked.emit(tuple(face_center), (0.0, 0.0, 1.0))
 
             # Hide placement buttons after successful placement
             self.disable_direct_placement_mode()
@@ -1410,7 +1870,7 @@ Watertight: {info['is_watertight']}"""
 
             if intersection_point is not None:
                 print(f"Found intersection at: {intersection_point}")
-                self.point_picked.emit(tuple(intersection_point))
+                self.point_picked.emit(tuple(intersection_point), (0.0, 0.0, 1.0))
 
                 # Disable direct click mode
                 self.direct_click_mode = False
@@ -1514,6 +1974,10 @@ Watertight: {info['is_watertight']}"""
             self.face_picker_btn.setVisible(True)
             self.face_picker_btn.setText("📋 Pick Face from List")
 
+        if hasattr(self, 'all_sides_btn') and self.all_sides_btn is not None:
+            self.all_sides_btn.setVisible(True)
+            self.all_sides_btn.setText("📦 Add ArUco on 6 Faces")
+
 
     def setup_face_highlighting(self) -> None:
         """Setup face highlighting system for direct placement mode."""
@@ -1583,66 +2047,6 @@ Watertight: {info['is_watertight']}"""
         except Exception as e:
             print(f"Error highlighting face: {e}")
 
-    def group_triangles_by_face(self):
-        """Group triangles that belong to the same face based on normal vectors."""
-        if self.mesh is None:
-            return []
-
-        face_groups = []
-        normal_tolerance = 0.1  # Tolerance for grouping normals
-
-        # Calculate normals for all triangles
-        triangle_normals = []
-        triangle_centers = []
-        triangle_areas = []
-
-        for i, triangle in enumerate(np.asarray(self.mesh.triangles)):
-            v1, v2, v3 = self.mesh.vertices[triangle[0]], self.mesh.vertices[triangle[1]], self.mesh.vertices[triangle[2]]
-
-            # Calculate normal
-            normal = np.cross(v2 - v1, v3 - v1)
-            normal = normal / (np.linalg.norm(normal) + 1e-8)  # Normalize
-
-            # Calculate center and area
-            center = (v1 + v2 + v3) / 3.0
-            area = 0.5 * np.linalg.norm(np.cross(v2 - v1, v3 - v1))
-
-            triangle_normals.append(normal)
-            triangle_centers.append(center)
-            triangle_areas.append(area)
-
-        # Group triangles by similar normals
-        used_triangles = set()
-
-        for i, normal in enumerate(triangle_normals):
-            if i in used_triangles:
-                continue
-
-            # Find all triangles with similar normals
-            group_triangles = [i]
-            group_centers = [triangle_centers[i]]
-            group_areas = [triangle_areas[i]]
-            used_triangles.add(i)
-
-            for j, other_normal in enumerate(triangle_normals):
-                if j in used_triangles:
-                    continue
-
-                # Check if normals are similar (dot product close to 1)
-                dot_product = np.dot(normal, other_normal)
-                if dot_product > (1.0 - normal_tolerance):
-                    group_triangles.append(j)
-                    group_centers.append(triangle_centers[j])
-                    group_areas.append(triangle_areas[j])
-                    used_triangles.add(j)
-
-            # Calculate face properties
-            face_center = np.mean(group_centers, axis=0)
-            face_area = sum(group_areas)
-
-            face_groups.append((face_center, normal, face_area, group_triangles))
-
-        return face_groups
 
     def add_grasp_pose(self, grasp_id: int, marker_id: int, position: tuple, orientation: tuple) -> None:
         """Add a grasp pose visualization."""
