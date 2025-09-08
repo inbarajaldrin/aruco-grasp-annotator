@@ -26,6 +26,7 @@ dependencies = [
     "trimesh>=4.0.0",
     "matplotlib>=3.7.0",
     "python-json-logger>=2.0.0",
+    "opencv-contrib-python>=4.11.0.86",
 ]
 
 [project.optional-dependencies]

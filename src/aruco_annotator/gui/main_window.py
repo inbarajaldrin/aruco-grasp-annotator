@@ -83,6 +83,15 @@ class MainWindow(QMainWindow):
         file_group = QGroupBox("CAD Model")
         file_layout = QVBoxLayout(file_group)
         
+        # Unit selection
+        unit_layout = QHBoxLayout()
+        unit_layout.addWidget(QLabel("Input Units:"))
+        self.unit_combo = QComboBox()
+        self.unit_combo.addItems(["Auto-detect", "mm", "cm", "m", "in", "ft"])
+        self.unit_combo.setCurrentText("Auto-detect")
+        unit_layout.addWidget(self.unit_combo)
+        file_layout.addLayout(unit_layout)
+        
         self.load_button = QPushButton("Load CAD File...")
         self.load_button.clicked.connect(self.load_cad_file)
         file_layout.addWidget(self.load_button)
@@ -119,6 +128,11 @@ class MainWindow(QMainWindow):
         # Wireframe mode
         self.wireframe_cb = QCheckBox("Wireframe Mode")
         view_layout.addWidget(self.wireframe_cb)
+        
+        # Show scale ruler
+        self.show_scale_cb = QCheckBox("Show Scale Ruler")
+        self.show_scale_cb.setChecked(True)
+        view_layout.addWidget(self.show_scale_cb)
         
         layout.addWidget(view_group)
         
@@ -256,16 +270,32 @@ class MainWindow(QMainWindow):
         self.show_axes_cb.toggled.connect(self.viewer_3d.show_axes)
         self.show_grid_cb.toggled.connect(self.viewer_3d.show_grid)
         self.wireframe_cb.toggled.connect(self.viewer_3d.set_wireframe)
+        self.show_scale_cb.toggled.connect(self.viewer_3d.show_scale_ruler)
         
         # Marker panel connections
-        self.marker_panel.marker_added.connect(self.viewer_3d.add_marker)
+        self.marker_panel.marker_added.connect(self.viewer_3d.add_aruco_marker)
         self.marker_panel.marker_removed.connect(self.viewer_3d.remove_marker)
         self.marker_panel.marker_selected.connect(self.viewer_3d.select_marker)
+        self.marker_panel.marker_position_changed.connect(self.viewer_3d.move_marker)
+        self.marker_panel.marker_moved.connect(self.viewer_3d.move_marker)
+        self.marker_panel.placement_mode_requested.connect(self.handle_placement_mode)
+        
+        # Viewer to marker panel connections
+        self.viewer_3d.point_picked.connect(self.marker_panel.place_marker_at_clicked_position)
         
         # Grasp panel connections
         self.grasp_panel.grasp_added.connect(self.viewer_3d.add_grasp_pose)
         self.grasp_panel.grasp_removed.connect(self.viewer_3d.remove_grasp_pose)
         self.grasp_panel.grasp_selected.connect(self.viewer_3d.select_grasp_pose)
+        
+    def handle_placement_mode(self, enable: bool) -> None:
+        """Handle placement mode requests from marker panel."""
+        if enable:
+            self.viewer_3d.enable_placement_mode()
+            self.status_bar.showMessage("Click on the 3D model to place a marker")
+        else:
+            self.viewer_3d.disable_placement_mode()
+            self.status_bar.showMessage("Placement mode cancelled")
         
     def load_cad_file(self) -> None:
         """Load a CAD file for annotation."""
@@ -280,23 +310,50 @@ class MainWindow(QMainWindow):
         if file_path:
             try:
                 self.current_file = Path(file_path)
-                mesh = self.cad_loader.load_file(self.current_file)
                 
-                # Update UI
-                self.file_label.setText(f"Loaded: {self.current_file.name}")
-                self.file_label.setStyleSheet("color: green;")
+                # Get selected units
+                selected_units = self.unit_combo.currentText()
+                if selected_units == "Auto-detect":
+                    input_units = "auto"
+                else:
+                    input_units = selected_units.lower()
                 
-                # Load mesh into viewer
-                self.viewer_3d.load_mesh(mesh)
+                mesh = self.cad_loader.load_file(self.current_file, input_units)
+                
+                # Get mesh information including dimensions
+                mesh_info = self.cad_loader.get_mesh_info(mesh)
+                dimensions = mesh_info['dimensions']
+                detected_units = self.cad_loader.get_input_units()
+                
+                # Update UI with dimension information
+                dim_text = f"Loaded: {self.current_file.name}\n"
+                dim_text += f"Dimensions: {dimensions['length']:.3f} × {dimensions['width']:.3f} × {dimensions['height']:.3f} m\n"
+                dim_text += f"Vertices: {mesh_info['vertices']:,} | Faces: {mesh_info['triangles']:,}\n"
+                if selected_units == "Auto-detect":
+                    dim_text += f"Detected input units: {detected_units}"
+                else:
+                    dim_text += f"Input units: {selected_units}"
+                
+                self.file_label.setText(dim_text)
+                self.file_label.setStyleSheet("color: green; font-size: 10px;")
+                
+                # Load mesh into viewer with dimension info
+                self.viewer_3d.load_mesh(mesh, mesh_info)
                 
                 # Enable export button
                 self.export_button.setEnabled(True)
                 
-                # Update status
-                self.status_bar.showMessage(f"Loaded: {self.current_file.name}")
+                # Update status with dimensions
+                self.status_bar.showMessage(
+                    f"Loaded: {self.current_file.name} - "
+                    f"Size: {dimensions['length']:.2f}×{dimensions['width']:.2f}×{dimensions['height']:.2f}m"
+                )
                 
                 # Reset annotation manager
                 self.annotation_manager.set_model_file(self.current_file)
+                
+                # Show dimension confirmation dialog
+                self.show_dimension_info(mesh_info)
                 
             except Exception as e:
                 QMessageBox.critical(
@@ -304,6 +361,40 @@ class MainWindow(QMainWindow):
                     "Error Loading File", 
                     f"Could not load file: {str(e)}"
                 )
+                
+    def show_dimension_info(self, mesh_info: dict) -> None:
+        """Show dimension information dialog to confirm CAD size."""
+        dimensions = mesh_info['dimensions']
+        detected_units = self.cad_loader.get_input_units()
+        
+        # Create detailed dimension info
+        info_text = f"""
+<b>CAD Model Dimensions (Converted to Meters):</b><br><br>
+<font size="+1">
+Length (X): {dimensions['length']:.3f} m<br>
+Width (Y):  {dimensions['width']:.3f} m<br>
+Height (Z): {dimensions['height']:.3f} m<br>
+</font><br>
+<b>Model Statistics:</b><br>
+• Vertices: {mesh_info['vertices']:,}<br>
+• Faces: {mesh_info['triangles']:,}<br>
+• Max Dimension: {mesh_info['max_dimension']:.3f} m<br>
+• Volume: {mesh_info['volume']:.6f} m³<br>
+• Surface Area: {mesh_info['surface_area']:.6f} m²<br><br>
+<font color="blue">
+<i>Input units detected: {detected_units}<br>
+All dimensions converted to meters for robotics applications.</i>
+</font>
+        """
+        
+        # Show information dialog
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("CAD Model Information")
+        msg_box.setTextFormat(Qt.TextFormat.RichText)
+        msg_box.setText(info_text)
+        msg_box.setIcon(QMessageBox.Icon.Information)
+        msg_box.setStandardButtons(QMessageBox.StandardButton.Ok)
+        msg_box.exec()
                 
     def export_annotations(self) -> None:
         """Export annotations to JSON file."""
