@@ -42,6 +42,7 @@ class MarkerPanel(QGroupBox):
     marker_selected = pyqtSignal(int)                 # marker_id
     marker_position_changed = pyqtSignal(int, tuple)  # marker_id, new_position
     marker_moved = pyqtSignal(int, tuple)             # marker_id, new_position
+    marker_orientation_changed = pyqtSignal(int, tuple)  # marker_id, new_orientation (roll, pitch, yaw)
     placement_mode_requested = pyqtSignal(bool)       # enable/disable placement mode
     
     def __init__(self):
@@ -184,6 +185,81 @@ class MarkerPanel(QGroupBox):
         movement_layout.addLayout(direction_layout)
         layout.addWidget(movement_group)
         
+        # Marker orientation controls
+        orientation_group = QGroupBox("Marker Orientation")
+        orientation_layout = QVBoxLayout(orientation_group)
+        
+        # Rotation step size control (fixed at 90 degrees)
+        rot_step_layout = QHBoxLayout()
+        rot_step_layout.addWidget(QLabel("Rotation Step:"))
+        self.rot_step_label = QLabel("90°")
+        self.rot_step_label.setStyleSheet("font-weight: bold; color: #2196F3;")
+        self.rot_step_label.setToolTip("Fixed 90-degree rotation steps")
+        rot_step_layout.addWidget(self.rot_step_label)
+        orientation_layout.addLayout(rot_step_layout)
+        
+        # Rotation buttons
+        rotation_layout = QVBoxLayout()
+        
+        # Pitch controls (X-axis rotation)
+        pitch_layout = QHBoxLayout()
+        pitch_layout.addWidget(QLabel("Pitch (X):"))
+        self.pitch_up_button = QPushButton("↗")
+        self.pitch_up_button.setFixedSize(40, 30)
+        self.pitch_up_button.setEnabled(False)
+        self.pitch_up_button.setToolTip("Rotate marker up 90° (positive pitch)")
+        pitch_layout.addWidget(self.pitch_up_button)
+        
+        self.pitch_down_button = QPushButton("↘")
+        self.pitch_down_button.setFixedSize(40, 30)
+        self.pitch_down_button.setEnabled(False)
+        self.pitch_down_button.setToolTip("Rotate marker down 90° (negative pitch)")
+        pitch_layout.addWidget(self.pitch_down_button)
+        rotation_layout.addLayout(pitch_layout)
+        
+        # Yaw controls (Y-axis rotation)
+        yaw_layout = QHBoxLayout()
+        yaw_layout.addWidget(QLabel("Yaw (Y):"))
+        self.yaw_left_button = QPushButton("↖")
+        self.yaw_left_button.setFixedSize(40, 30)
+        self.yaw_left_button.setEnabled(False)
+        self.yaw_left_button.setToolTip("Rotate marker left 90° (negative yaw)")
+        yaw_layout.addWidget(self.yaw_left_button)
+        
+        self.yaw_right_button = QPushButton("↗")
+        self.yaw_right_button.setFixedSize(40, 30)
+        self.yaw_right_button.setEnabled(False)
+        self.yaw_right_button.setToolTip("Rotate marker right 90° (positive yaw)")
+        yaw_layout.addWidget(self.yaw_right_button)
+        rotation_layout.addLayout(yaw_layout)
+        
+        # Roll controls (Z-axis rotation)
+        roll_layout = QHBoxLayout()
+        roll_layout.addWidget(QLabel("Roll (Z):"))
+        self.roll_left_button = QPushButton("↶")
+        self.roll_left_button.setFixedSize(40, 30)
+        self.roll_left_button.setEnabled(False)
+        self.roll_left_button.setToolTip("Rotate marker counter-clockwise 90° (negative roll)")
+        roll_layout.addWidget(self.roll_left_button)
+        
+        self.roll_right_button = QPushButton("↷")
+        self.roll_right_button.setFixedSize(40, 30)
+        self.roll_right_button.setEnabled(False)
+        self.roll_right_button.setToolTip("Rotate marker clockwise 90° (positive roll)")
+        roll_layout.addWidget(self.roll_right_button)
+        rotation_layout.addLayout(roll_layout)
+        
+        # Reset orientation button
+        reset_orientation_layout = QHBoxLayout()
+        self.reset_orientation_button = QPushButton("Reset Orientation")
+        self.reset_orientation_button.setEnabled(False)
+        self.reset_orientation_button.setToolTip("Reset marker orientation to default")
+        reset_orientation_layout.addWidget(self.reset_orientation_button)
+        rotation_layout.addLayout(reset_orientation_layout)
+        
+        orientation_layout.addLayout(rotation_layout)
+        layout.addWidget(orientation_group)
+        
         # Position input section (for manual entry)
         position_group = QGroupBox("Manual Position Entry")
         position_layout = QVBoxLayout(position_group)
@@ -239,6 +315,15 @@ class MarkerPanel(QGroupBox):
         self.down_button.clicked.connect(lambda: self.move_marker('down'))
         self.left_button.clicked.connect(lambda: self.move_marker('left'))
         self.right_button.clicked.connect(lambda: self.move_marker('right'))
+        
+        # Connect orientation buttons
+        self.pitch_up_button.clicked.connect(lambda: self.rotate_marker('pitch_up'))
+        self.pitch_down_button.clicked.connect(lambda: self.rotate_marker('pitch_down'))
+        self.yaw_left_button.clicked.connect(lambda: self.rotate_marker('yaw_left'))
+        self.yaw_right_button.clicked.connect(lambda: self.rotate_marker('yaw_right'))
+        self.roll_left_button.clicked.connect(lambda: self.rotate_marker('roll_left'))
+        self.roll_right_button.clicked.connect(lambda: self.rotate_marker('roll_right'))
+        self.reset_orientation_button.clicked.connect(self.reset_marker_orientation)
         
         self.marker_list.itemSelectionChanged.connect(self.on_selection_changed)
         self.marker_list.itemDoubleClicked.connect(self.edit_selected_marker)
@@ -438,6 +523,15 @@ class MarkerPanel(QGroupBox):
         self.left_button.setEnabled(has_selection)
         self.right_button.setEnabled(has_selection)
         
+        # Enable/disable orientation buttons
+        self.pitch_up_button.setEnabled(has_selection)
+        self.pitch_down_button.setEnabled(has_selection)
+        self.yaw_left_button.setEnabled(has_selection)
+        self.yaw_right_button.setEnabled(has_selection)
+        self.roll_left_button.setEnabled(has_selection)
+        self.roll_right_button.setEnabled(has_selection)
+        self.reset_orientation_button.setEnabled(has_selection)
+        
         if has_selection and isinstance(current_item, MarkerListItem):
             # Emit selection signal
             self.marker_selected.emit(current_item.marker_id)
@@ -569,3 +663,63 @@ class MarkerPanel(QGroupBox):
         if current_item and isinstance(current_item, MarkerListItem):
             return current_item.marker_id
         return -1
+    
+    def rotate_marker(self, direction: str) -> None:
+        """Rotate the selected marker in the specified direction."""
+        current_item = self.marker_list.currentItem()
+        if not current_item or not isinstance(current_item, MarkerListItem):
+            return
+            
+        # Get current rotation (default to 0,0,0 if not set)
+        current_rotation = getattr(current_item.aruco_info, 'rotation', (0.0, 0.0, 0.0))
+        roll, pitch, yaw = current_rotation
+        
+        # Fixed 90-degree rotation step
+        step_degrees = 90.0
+        step_radians = step_degrees * 3.14159 / 180.0
+        
+        # Apply rotation based on direction
+        if direction == 'pitch_up':
+            pitch += step_radians
+        elif direction == 'pitch_down':
+            pitch -= step_radians
+        elif direction == 'yaw_left':
+            yaw -= step_radians
+        elif direction == 'yaw_right':
+            yaw += step_radians
+        elif direction == 'roll_left':
+            roll -= step_radians
+        elif direction == 'roll_right':
+            roll += step_radians
+            
+        # Normalize angles to [-π, π]
+        roll = ((roll + 3.14159) % (2 * 3.14159)) - 3.14159
+        pitch = ((pitch + 3.14159) % (2 * 3.14159)) - 3.14159
+        yaw = ((yaw + 3.14159) % (2 * 3.14159)) - 3.14159
+        
+        new_rotation = (roll, pitch, yaw)
+        
+        # Update the marker's rotation
+        current_item.aruco_info.rotation = new_rotation
+        current_item.update_text()
+        
+        # Emit orientation change signal
+        self.marker_orientation_changed.emit(current_item.marker_id, new_rotation)
+        
+        print(f"Rotated marker {current_item.marker_id} {direction}: {new_rotation}")
+    
+    def reset_marker_orientation(self) -> None:
+        """Reset the selected marker's orientation to default."""
+        current_item = self.marker_list.currentItem()
+        if not current_item or not isinstance(current_item, MarkerListItem):
+            return
+            
+        # Reset to default rotation
+        default_rotation = (0.0, 0.0, 0.0)
+        current_item.aruco_info.rotation = default_rotation
+        current_item.update_text()
+        
+        # Emit orientation change signal
+        self.marker_orientation_changed.emit(current_item.marker_id, default_rotation)
+        
+        print(f"Reset rotation for marker {current_item.marker_id}")

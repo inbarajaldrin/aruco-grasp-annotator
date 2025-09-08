@@ -278,6 +278,7 @@ class MainWindow(QMainWindow):
         self.marker_panel.marker_selected.connect(self.viewer_3d.select_marker)
         self.marker_panel.marker_position_changed.connect(self.viewer_3d.move_marker)
         self.marker_panel.marker_moved.connect(self.viewer_3d.move_marker)
+        self.marker_panel.marker_orientation_changed.connect(self.viewer_3d.rotate_marker)
         self.marker_panel.placement_mode_requested.connect(self.handle_placement_mode)
         
         # Viewer to marker panel connections
@@ -356,10 +357,21 @@ class MainWindow(QMainWindow):
                 self.show_dimension_info(mesh_info)
                 
             except Exception as e:
+                error_msg = f"Could not load file: {str(e)}"
+                
+                # Print error to terminal
+                print("=" * 60)
+                print("ERROR LOADING CAD FILE:")
+                print(error_msg)
+                print("Exception type:", type(e).__name__)
+                import traceback
+                traceback.print_exc()
+                print("=" * 60)
+                
                 QMessageBox.critical(
                     self, 
                     "Error Loading File", 
-                    f"Could not load file: {str(e)}"
+                    error_msg
                 )
                 
     def show_dimension_info(self, mesh_info: dict) -> None:
@@ -429,10 +441,21 @@ All dimensions converted to meters for robotics applications.</i>
                 )
                 
             except Exception as e:
+                error_msg = f"Could not export annotations: {str(e)}"
+                
+                # Print error to terminal
+                print("=" * 60)
+                print("ERROR EXPORTING ANNOTATIONS:")
+                print(error_msg)
+                print("Exception type:", type(e).__name__)
+                import traceback
+                traceback.print_exc()
+                print("=" * 60)
+                
                 QMessageBox.critical(
                     self, 
                     "Export Error", 
-                    f"Could not export annotations: {str(e)}"
+                    error_msg
                 )
                 
     def import_annotations(self) -> None:
@@ -460,10 +483,21 @@ All dimensions converted to meters for robotics applications.</i>
                 self.status_bar.showMessage(f"Annotations imported from: {Path(file_path).name}")
                 
             except Exception as e:
+                error_msg = f"Could not import annotations: {str(e)}"
+                
+                # Print error to terminal
+                print("=" * 60)
+                print("ERROR IMPORTING ANNOTATIONS:")
+                print(error_msg)
+                print("Exception type:", type(e).__name__)
+                import traceback
+                traceback.print_exc()
+                print("=" * 60)
+                
                 QMessageBox.critical(
                     self, 
                     "Import Error", 
-                    f"Could not import annotations: {str(e)}"
+                    error_msg
                 )
                 
     def show_about(self) -> None:
