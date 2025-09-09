@@ -648,16 +648,15 @@ Watertight: {info['is_watertight']}"""
         x, y, z = position
         roll, pitch, yaw = rotation
         
-        # Apply reasonable size limits based on model dimensions
-        if self.mesh_info and 'max_dimension' in self.mesh_info:
-            model_size = self.mesh_info['max_dimension']
-            # Limit marker size to be between 1% and 10% of model size
-            min_size = model_size * 0.01  # 1% of model
-            max_size = model_size * 0.10  # 10% of model
-            size = max(min_size, min(size, max_size))
-        else:
-            # Fallback limits for when no model info is available
-            size = max(0.005, min(size, 0.1))  # Between 5mm and 10cm
+        # Use the exact size specified by the user - no proportional scaling
+        print(f"📐 Model max dimension: {self.mesh_info['max_dimension']:.3f}m" if self.mesh_info and 'max_dimension' in self.mesh_info else "📐 No model info available")
+        print(f"🎯 Using exact user-specified size: {size:.3f}m")
+        
+        # Only apply basic safety limits to prevent extremely small or large markers
+        original_size = size
+        size = max(0.0001, min(size, 1.0))  # Between 0.1mm and 1m
+        if size != original_size:
+            print(f"⚠️  Size adjusted from {original_size:.3f}m to {size:.3f}m (safety limits only)")
         
         # Create the main marker base (flat rectangle)
         marker_mesh = o3d.geometry.TriangleMesh.create_box(size, size, size/20)
@@ -736,16 +735,20 @@ Watertight: {info['is_watertight']}"""
         # Use the size from ArUcoMarkerInfo, but apply reasonable limits
         size = aruco_info.size
         
-        # Apply reasonable size limits based on model dimensions
-        if self.mesh_info and 'max_dimension' in self.mesh_info:
-            model_size = self.mesh_info['max_dimension']
-            # Limit marker size to be between 1% and 10% of model size
-            min_size = model_size * 0.01  # 1% of model
-            max_size = model_size * 0.10  # 10% of model
-            size = max(min_size, min(size, max_size))
-        else:
-            # Fallback limits for when no model info is available
-            size = max(0.005, min(size, 0.1))  # Between 5mm and 10cm
+        # Debug: Show size information
+        print(f"🎯 ArUco marker size: User input = {aruco_info.size:.3f}m")
+        
+        # Use the exact size specified by the user - no proportional scaling
+        print(f"📐 Model max dimension: {self.mesh_info['max_dimension']:.3f}m" if self.mesh_info and 'max_dimension' in self.mesh_info else "📐 No model info available")
+        print(f"🎯 Using exact user-specified size: {size:.3f}m")
+        
+        # Only apply basic safety limits to prevent extremely small or large markers
+        original_size = size
+        size = max(0.0001, min(size, 1.0))  # Between 0.1mm and 1m
+        if size != original_size:
+            print(f"⚠️  Size adjusted from {original_size:.3f}m to {size:.3f}m (safety limits only)")
+        
+        print(f"🎯 Final marker size: {size:.3f}m")
         
         # Generate the actual ArUco marker image
         marker_image = self.aruco_generator.generate_marker(
