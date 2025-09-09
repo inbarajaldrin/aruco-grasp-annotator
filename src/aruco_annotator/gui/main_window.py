@@ -16,7 +16,6 @@ from PyQt6.QtWidgets import (
 
 from .working_viewer_3d import WorkingViewer3D
 from .marker_panel import MarkerPanel
-from .grasp_panel import GraspPanel
 from ..core.cad_loader import CADLoader
 from ..core.annotation_manager import AnnotationManager
 
@@ -35,7 +34,7 @@ class MainWindow(QMainWindow):
         
     def init_ui(self) -> None:
         """Initialize the user interface."""
-        self.setWindowTitle("ArUco Grasp Annotator")
+        self.setWindowTitle("ArUco Marker Annotator")
         self.setGeometry(100, 100, 1400, 900)
         
         # Create central widget and main layout
@@ -55,7 +54,7 @@ class MainWindow(QMainWindow):
         self.viewer_3d = WorkingViewer3D()
         main_splitter.addWidget(self.viewer_3d)
         
-        # Right panel for grasp poses
+        # Right panel for export/import
         self.right_panel = self.create_right_panel()
         main_splitter.addWidget(self.right_panel)
         
@@ -112,38 +111,6 @@ class MainWindow(QMainWindow):
         
         layout.addWidget(file_group)
         
-        # View controls
-        view_group = QGroupBox("View Controls")
-        view_layout = QVBoxLayout(view_group)
-        
-        # Background color
-        bg_layout = QHBoxLayout()
-        bg_layout.addWidget(QLabel("Background:"))
-        self.bg_combo = QComboBox()
-        self.bg_combo.addItems(["Dark", "Light", "Gradient"])
-        bg_layout.addWidget(self.bg_combo)
-        view_layout.addLayout(bg_layout)
-        
-        # Show axes
-        self.show_axes_cb = QCheckBox("Show Coordinate Axes")
-        self.show_axes_cb.setChecked(True)
-        view_layout.addWidget(self.show_axes_cb)
-        
-        # Show grid
-        self.show_grid_cb = QCheckBox("Show Grid")
-        self.show_grid_cb.setChecked(True)
-        view_layout.addWidget(self.show_grid_cb)
-        
-        # Wireframe mode
-        self.wireframe_cb = QCheckBox("Wireframe Mode")
-        view_layout.addWidget(self.wireframe_cb)
-        
-        # Show scale ruler
-        self.show_scale_cb = QCheckBox("Show Scale Ruler")
-        self.show_scale_cb.setChecked(True)
-        view_layout.addWidget(self.show_scale_cb)
-        
-        layout.addWidget(view_group)
         
         # ArUco Markers section
         self.marker_panel = MarkerPanel()
@@ -158,16 +125,12 @@ class MainWindow(QMainWindow):
         return scroll_area
         
     def create_right_panel(self) -> QWidget:
-        """Create the right panel for grasp poses."""
+        """Create the right panel for export/import."""
         panel = QWidget()
         panel.setMaximumWidth(350)
         panel.setMinimumWidth(250)
         
         layout = QVBoxLayout(panel)
-        
-        # Grasp poses section
-        self.grasp_panel = GraspPanel()
-        layout.addWidget(self.grasp_panel)
         
         # Export section
         export_group = QGroupBox("Export")
@@ -277,12 +240,6 @@ class MainWindow(QMainWindow):
         
     def setup_connections(self) -> None:
         """Setup signal-slot connections between components."""
-        # View control connections
-        self.bg_combo.currentTextChanged.connect(self.viewer_3d.set_background)
-        self.show_axes_cb.toggled.connect(self.viewer_3d.show_axes)
-        self.show_grid_cb.toggled.connect(self.viewer_3d.show_grid)
-        self.wireframe_cb.toggled.connect(self.viewer_3d.set_wireframe)
-        self.show_scale_cb.toggled.connect(self.viewer_3d.show_scale_ruler)
         
         # Marker panel connections
         self.marker_panel.marker_added.connect(self.viewer_3d.add_aruco_marker)
@@ -296,10 +253,6 @@ class MainWindow(QMainWindow):
         # Viewer to marker panel connections
         self.viewer_3d.point_picked.connect(self.marker_panel.place_marker_at_clicked_position)
         
-        # Grasp panel connections
-        self.grasp_panel.grasp_added.connect(self.viewer_3d.add_grasp_pose)
-        self.grasp_panel.grasp_removed.connect(self.viewer_3d.remove_grasp_pose)
-        self.grasp_panel.grasp_selected.connect(self.viewer_3d.select_grasp_pose)
         
     def handle_placement_mode(self, enable: bool) -> None:
         """Handle placement mode requests from marker panel."""
@@ -441,11 +394,10 @@ All dimensions converted to meters for robotics applications.</i>
             try:
                 # Collect annotations from UI
                 markers = self.marker_panel.get_all_markers()
-                grasp_poses = self.grasp_panel.get_all_grasp_poses()
                 
                 # Export using annotation manager
                 self.annotation_manager.export_annotations(
-                    Path(file_path), markers, grasp_poses
+                    Path(file_path), markers, []
                 )
                 
                 self.status_bar.showMessage(f"Annotations exported to: {Path(file_path).name}")
@@ -490,7 +442,6 @@ All dimensions converted to meters for robotics applications.</i>
                 
                 # Load into UI panels
                 self.marker_panel.load_markers(data.get("markers", []))
-                self.grasp_panel.load_grasp_poses(data.get("grasp_poses", []))
                 
                 # Update viewer
                 self.viewer_3d.load_annotations(data)
@@ -519,14 +470,14 @@ All dimensions converted to meters for robotics applications.</i>
         """Show about dialog."""
         QMessageBox.about(
             self,
-            "About ArUco Grasp Annotator",
-            """<h3>ArUco Grasp Annotator v0.1.0</h3>
-            <p>A 3D CAD annotation tool for defining grasp poses relative to ArUco markers.</p>
+            "About ArUco Marker Annotator",
+            """<h3>ArUco Marker Annotator v0.1.0</h3>
+            <p>A 3D CAD annotation tool for placing ArUco markers on objects.</p>
             <p><b>Features:</b></p>
             <ul>
             <li>Load STL, OBJ, and PLY files</li>
             <li>Place ArUco markers on 3D objects</li>
-            <li>Define grasp poses with visual feedback</li>
+            <li>Visual marker editing and positioning</li>
             <li>Export annotations for robotics pipelines</li>
             </ul>
             <p><b>Controls:</b></p>

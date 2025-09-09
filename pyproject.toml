@@ -1,7 +1,7 @@
 [project]
 name = "aruco-grasp-annotator"
 version = "0.1.0"
-description = "3D CAD annotation tool for defining grasp poses relative to ArUco markers"
+description = "3D CAD annotation tool for placing ArUco markers on objects"
 readme = "README.md"
 requires-python = ">=3.9,<3.13"
 authors = [

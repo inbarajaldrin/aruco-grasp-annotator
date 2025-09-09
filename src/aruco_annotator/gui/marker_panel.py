@@ -456,7 +456,7 @@ class MarkerPanel(QGroupBox):
         print(f"📐 Calculated rotation: ({rotation[0]:.3f}, {rotation[1]:.3f}, {rotation[2]:.3f}) rad")
         
         # Note: The marker position becomes the origin (0,0,0) for the object coordinate system
-        # This is important for robotics applications where grasp poses are relative to the marker
+        # This is important for robotics applications where object poses are relative to the marker
         
         # Create ArUco marker info
         aruco_info = ArUcoMarkerInfo(

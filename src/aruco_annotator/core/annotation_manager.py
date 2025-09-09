@@ -1,4 +1,4 @@
-"""Annotation manager for handling markers and grasp poses."""
+"""Annotation manager for handling markers."""
 
 import json
 import numpy as np
@@ -22,8 +22,7 @@ class AnnotationManager:
             "model_file": str(file_path),
             "created_at": datetime.now().isoformat(),
             "modified_at": datetime.now().isoformat(),
-            "markers": [],
-            "grasp_poses": []
+            "markers": []
         }
         self.has_changes = False
         
@@ -52,56 +51,14 @@ class AnnotationManager:
             m for m in self.annotations["markers"] if m["id"] != marker_id
         ]
         
-        # Remove associated grasp poses
-        self.annotations["grasp_poses"] = [
-            g for g in self.annotations["grasp_poses"] if g["marker_id"] != marker_id
-        ]
         
         self._mark_modified()
         
-    def add_grasp_pose(self, grasp_id: int, name: str, marker_id: int, 
-                      position: tuple, orientation: tuple) -> None:
-        """Add a grasp pose to the annotations."""
-        grasp_data = {
-            "id": grasp_id,
-            "name": name,
-            "marker_id": marker_id,
-            "position": list(position),
-            "orientation": list(orientation),  # quaternion (w, x, y, z)
-            "created_at": datetime.now().isoformat()
-        }
         
-        # Remove existing grasp with same ID
-        self.annotations["grasp_poses"] = [
-            g for g in self.annotations["grasp_poses"] if g["id"] != grasp_id
-        ]
-        
-        # Add new grasp
-        self.annotations["grasp_poses"].append(grasp_data)
-        self._mark_modified()
-        
-    def remove_grasp_pose(self, grasp_id: int) -> None:
-        """Remove a grasp pose from annotations."""
-        self.annotations["grasp_poses"] = [
-            g for g in self.annotations["grasp_poses"] if g["id"] != grasp_id
-        ]
-        self._mark_modified()
-        
-    def update_grasp_pose(self, grasp_id: int, position: tuple, orientation: tuple) -> None:
-        """Update a grasp pose position and orientation."""
-        for grasp in self.annotations["grasp_poses"]:
-            if grasp["id"] == grasp_id:
-                grasp["position"] = list(position)
-                grasp["orientation"] = list(orientation)
-                grasp["modified_at"] = datetime.now().isoformat()
-                break
-        self._mark_modified()
-        
-    def export_annotations(self, output_path: Path, markers: List[Dict], grasp_poses: List[Dict]) -> None:
+    def export_annotations(self, output_path: Path, markers: List[Dict]) -> None:
         """Export annotations to JSON file."""
         # Update annotations with current data
         self.annotations["markers"] = markers
-        self.annotations["grasp_poses"] = grasp_poses
         self.annotations["modified_at"] = datetime.now().isoformat()
         
         # Add metadata
@@ -109,8 +66,7 @@ class AnnotationManager:
             **self.annotations,
             "version": "1.0",
             "exported_at": datetime.now().isoformat(),
-            "total_markers": len(markers),
-            "total_grasp_poses": len(grasp_poses)
+            "total_markers": len(markers)
         }
         
         # Convert numpy arrays to lists (if any)
@@ -141,28 +97,11 @@ class AnnotationManager:
         exported_markers = []
         
         for marker in self.annotations.get("markers", []):
-            # Get associated grasp poses
-            associated_grasps = [
-                g for g in self.annotations.get("grasp_poses", []) 
-                if g["marker_id"] == marker["id"]
-            ]
-            
-            # Format grasp poses
-            formatted_grasps = []
-            for grasp in associated_grasps:
-                formatted_grasps.append({
-                    "name": grasp["name"],
-                    "position": grasp["position"],
-                    "orientation": grasp["orientation"],
-                    "approach_vector": self._compute_approach_vector(grasp["orientation"])
-                })
-                
             exported_markers.append({
                 "id": marker["id"],
                 "position": marker["position"],
                 "orientation": [1.0, 0.0, 0.0, 0.0],  # Identity quaternion for marker
-                "size": marker.get("size", 0.05),
-                "grasp_poses": formatted_grasps
+                "size": marker.get("size", 0.05)
             })
             
         return exported_markers
@@ -203,7 +142,7 @@ class AnnotationManager:
             
     def _validate_annotations(self, data: Dict[str, Any]) -> None:
         """Validate annotation data structure."""
-        required_fields = ["markers", "grasp_poses"]
+        required_fields = ["markers"]
         
         for field in required_fields:
             if field not in data:
@@ -216,35 +155,14 @@ class AnnotationManager:
                 if field not in marker:
                     raise ValueError(f"Marker missing required field: {field}")
                     
-        # Validate grasp poses
-        for grasp in data["grasp_poses"]:
-            required_grasp_fields = ["id", "name", "marker_id", "position", "orientation"]
-            for field in required_grasp_fields:
-                if field not in grasp:
-                    raise ValueError(f"Grasp pose missing required field: {field}")
                     
-    def _compute_approach_vector(self, quaternion: List[float]) -> List[float]:
-        """Compute approach vector from quaternion orientation."""
-        # This is a simplified computation
-        # In practice, you'd use proper quaternion math
-        # For now, return a default approach vector (positive Z)
-        return [0.0, 0.0, 1.0]
         
     def get_statistics(self) -> Dict[str, Any]:
         """Get statistics about current annotations."""
         markers = self.annotations.get("markers", [])
-        grasps = self.annotations.get("grasp_poses", [])
-        
-        # Grasp poses per marker
-        grasps_per_marker = {}
-        for grasp in grasps:
-            marker_id = grasp["marker_id"]
-            grasps_per_marker[marker_id] = grasps_per_marker.get(marker_id, 0) + 1
             
         return {
             "total_markers": len(markers),
-            "total_grasp_poses": len(grasps),
-            "grasps_per_marker": grasps_per_marker,
             "has_unsaved_changes": self.has_changes,
             "model_file": str(self.model_file) if self.model_file else None
         }

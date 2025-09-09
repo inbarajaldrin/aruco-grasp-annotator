@@ -21,20 +21,17 @@ class WorkingViewer3D(QWidget):
     
     # Signals
     marker_clicked = pyqtSignal(int)
-    grasp_clicked = pyqtSignal(int)
     point_picked = pyqtSignal(tuple, tuple)  # (position, normal)
     
     def __init__(self) -> None:
         super().__init__()
         self.mesh: Optional[o3d.geometry.TriangleMesh] = None
         self.markers: Dict[int, Dict[str, Any]] = {}
-        self.grasp_poses: Dict[int, Dict[str, Any]] = {}
         self.vis: Optional[o3d.visualization.Visualizer] = None
         self.placement_mode = False
         self.direct_click_mode = False
         self.aruco_generator = ArUcoGenerator()
         self.mesh_info: Optional[dict] = None
-        self.scale_ruler: Optional[o3d.geometry.TriangleMesh] = None
         self.face_groups = None
         self.highlighted_faces = []
         self.geometries: Dict[str, Any] = {}  # Track geometries for toggle controls
@@ -59,33 +56,11 @@ class WorkingViewer3D(QWidget):
         
         self.launch_3d_btn = QPushButton("Launch 3D Viewer")
         self.launch_3d_btn.clicked.connect(self.toggle_3d_viewer)
-        self.launch_3d_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #4CAF50;
-                color: white;
-                font-weight: bold;
-                padding: 8px;
-                border-radius: 4px;
-            }
-            QPushButton:hover {
-                background-color: #45a049;
-            }
-        """)
         controls_layout.addWidget(self.launch_3d_btn)
         
         # Placement instruction label (for placement mode)
         self.placement_label = QLabel("Choose how to place ArUco marker:\n• 🎯 Random Face • 📋 Face List")
         self.placement_label.setVisible(False)  # Hidden by default
-        self.placement_label.setStyleSheet("""
-            QLabel {
-                background-color: #FFF3CD;
-                border: 1px solid #FFEAA7;
-                border-radius: 4px;
-                padding: 8px;
-                color: #856404;
-                font-weight: bold;
-            }
-        """)
         controls_layout.addWidget(self.placement_label)
         
         # Placeholder for alternative placement button (added later if needed)
@@ -95,7 +70,6 @@ class WorkingViewer3D(QWidget):
         
         # Mode indicator
         self.mode_label = QLabel("Mode: View")
-        self.mode_label.setStyleSheet("font-weight: bold; color: blue;")
         controls_layout.addWidget(self.mode_label)
         
         layout.addLayout(controls_layout)
@@ -117,13 +91,6 @@ class WorkingViewer3D(QWidget):
         """Create the 3D view area."""
         view_widget = QFrame()
         view_widget.setFrameStyle(QFrame.Shape.Box)
-        view_widget.setStyleSheet("""
-            QFrame {
-                background-color: #2b2b2b;
-                border: 2px solid #555;
-                border-radius: 8px;
-            }
-        """)
         view_widget.setMinimumSize(500, 400)
         
         layout = QVBoxLayout(view_widget)
@@ -132,41 +99,16 @@ class WorkingViewer3D(QWidget):
         # Title
         title = QLabel("3D Model Viewer")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setStyleSheet("""
-            QLabel {
-                color: white;
-                font-size: 18px;
-                font-weight: bold;
-                margin-bottom: 10px;
-            }
-        """)
         layout.addWidget(title)
         
         # Status label
         self.status_label = QLabel("No model loaded")
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.status_label.setStyleSheet("""
-            QLabel {
-                color: #888;
-                font-size: 14px;
-                margin: 20px;
-            }
-        """)
         layout.addWidget(self.status_label)
         
         # Model info
         self.model_info = QTextEdit()
         self.model_info.setMaximumHeight(200)
-        self.model_info.setStyleSheet("""
-            QTextEdit {
-                background-color: #1a1a1a;
-                color: #ccc;
-                border: 1px solid #444;
-                border-radius: 4px;
-                font-family: 'Courier New', monospace;
-                font-size: 12px;
-            }
-        """)
         self.model_info.setReadOnly(True)
         layout.addWidget(self.model_info)
         
@@ -176,15 +118,8 @@ class WorkingViewer3D(QWidget):
         1. Load a CAD file using the File menu<br>
         2. Click "Launch 3D Viewer" to open the 3D visualization<br>
         3. Place ArUco markers in the left panel<br>
-        4. Define grasp poses in the right panel<br>
-        5. Use the 3D viewer to see your annotations in real-time
-        """)
-        instructions.setStyleSheet("""
-            QLabel {
-                color: #aaa;
-                font-size: 12px;
-                margin: 10px;
-            }
+        4. Export your annotations when finished<br>
+        5. Use the 3D viewer to see your markers in real-time
         """)
         instructions.setWordWrap(True)
         layout.addWidget(instructions)
@@ -196,13 +131,6 @@ class WorkingViewer3D(QWidget):
         """Create the information panel."""
         info_widget = QFrame()
         info_widget.setFrameStyle(QFrame.Shape.Box)
-        info_widget.setStyleSheet("""
-            QFrame {
-                background-color: #1e1e1e;
-                border: 2px solid #444;
-                border-radius: 8px;
-            }
-        """)
         info_widget.setMaximumWidth(300)
         
         layout = QVBoxLayout(info_widget)
@@ -210,84 +138,22 @@ class WorkingViewer3D(QWidget):
         
         # Title
         title = QLabel("Model Information")
-        title.setStyleSheet("""
-            QLabel {
-                color: white;
-                font-size: 16px;
-                font-weight: bold;
-                margin-bottom: 10px;
-            }
-        """)
         layout.addWidget(title)
         
         # Statistics
         self.stats_text = QTextEdit()
-        self.stats_text.setStyleSheet("""
-            QTextEdit {
-                background-color: #2a2a2a;
-                color: #ddd;
-                border: 1px solid #555;
-                border-radius: 4px;
-                font-family: 'Courier New', monospace;
-                font-size: 11px;
-            }
-        """)
         self.stats_text.setReadOnly(True)
         layout.addWidget(self.stats_text)
         
         # Markers info
         markers_title = QLabel("ArUco Markers")
-        markers_title.setStyleSheet("""
-            QLabel {
-                color: #ff6b6b;
-                font-size: 14px;
-                font-weight: bold;
-                margin-top: 10px;
-            }
-        """)
         layout.addWidget(markers_title)
         
         self.markers_text = QTextEdit()
         self.markers_text.setMaximumHeight(100)
-        self.markers_text.setStyleSheet("""
-            QTextEdit {
-                background-color: #2a2a2a;
-                color: #ff6b6b;
-                border: 1px solid #555;
-                border-radius: 4px;
-                font-family: 'Courier New', monospace;
-                font-size: 11px;
-            }
-        """)
         self.markers_text.setReadOnly(True)
         layout.addWidget(self.markers_text)
         
-        # Grasp poses info
-        grasps_title = QLabel("Grasp Poses")
-        grasps_title.setStyleSheet("""
-            QLabel {
-                color: #4ecdc4;
-                font-size: 14px;
-                font-weight: bold;
-                margin-top: 10px;
-            }
-        """)
-        layout.addWidget(grasps_title)
-        
-        self.grasps_text = QTextEdit()
-        self.grasps_text.setMaximumHeight(100)
-        self.grasps_text.setStyleSheet("""
-            QTextEdit {
-                background-color: #2a2a2a;
-                color: #4ecdc4;
-                border: 1px solid #555;
-                border-radius: 4px;
-                font-family: 'Courier New', monospace;
-                font-size: 11px;
-            }
-        """)
-        self.grasps_text.setReadOnly(True)
-        layout.addWidget(self.grasps_text)
         
         layout.addStretch()
         return info_widget
@@ -316,13 +182,6 @@ class WorkingViewer3D(QWidget):
             status_text = "Model loaded successfully"
         
         self.status_label.setText(status_text)
-        self.status_label.setStyleSheet("""
-            QLabel {
-                color: #4CAF50;
-                font-size: 14px;
-                margin: 20px;
-            }
-        """)
         
         # Update model info
         info = self.get_mesh_info(mesh)
@@ -394,27 +253,8 @@ Watertight: {info['is_watertight']}"""
             
             # Update UI
             self.launch_3d_btn.setText("Launch 3D Viewer")
-            self.launch_3d_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #4CAF50;
-                    color: white;
-                    font-weight: bold;
-                    padding: 8px;
-                    border-radius: 4px;
-                }
-                QPushButton:hover {
-                    background-color: #45a049;
-                }
-            """)
             
             self.status_label.setText("3D viewer closed")
-            self.status_label.setStyleSheet("""
-                QLabel {
-                    color: #888;
-                    font-size: 14px;
-                    margin: 20px;
-                }
-            """)
             self.update_stats()
             
     def launch_3d_viewer(self) -> None:
@@ -424,19 +264,12 @@ Watertight: {info['is_watertight']}"""
             print("ERROR:", error_msg)
             
             self.status_label.setText(error_msg)
-            self.status_label.setStyleSheet("""
-                QLabel {
-                    color: #ff6b6b;
-                    font-size: 14px;
-                    margin: 20px;
-                }
-            """)
             return
             
         try:
             # Create visualizer
             self.vis = o3d.visualization.Visualizer()
-            self.vis.create_window(window_name="ArUco Grasp Annotator - 3D View", 
+            self.vis.create_window(window_name="ArUco Marker Annotator - 3D View", 
                                   width=800, height=600, visible=True)
             
             # Setup render options
@@ -458,12 +291,6 @@ Watertight: {info['is_watertight']}"""
             self.vis.add_geometry(coord_frame)
             self.geometries['coordinate_frame'] = coord_frame
             
-            # Add scale ruler if mesh info is available
-            if self.mesh_info:
-                self.scale_ruler = self.create_scale_ruler()
-                if self.scale_ruler:
-                    self.vis.add_geometry(self.scale_ruler)
-                    self.geometries['scale_ruler'] = self.scale_ruler
             
             # Add the mesh
             self.vis.add_geometry(self.mesh)
@@ -480,37 +307,14 @@ Watertight: {info['is_watertight']}"""
                     size = marker_data.get('size', 0.05)
                     self.add_marker_to_viewer(marker_id, position, size)
                 
-            # Add existing grasp poses
-            for grasp_id, grasp_data in self.grasp_poses.items():
-                self.add_grasp_to_viewer(grasp_id, grasp_data['marker_id'], 
-                                       grasp_data['position'], grasp_data['orientation'])
             
             # Reset view
             self.vis.reset_view_point(True)
             
             # Update button text and style
             self.launch_3d_btn.setText("Close 3D Viewer")
-            self.launch_3d_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #f44336;
-                    color: white;
-                    font-weight: bold;
-                    padding: 8px;
-                    border-radius: 4px;
-                }
-                QPushButton:hover {
-                    background-color: #da190b;
-                }
-            """)
             
             self.status_label.setText("3D viewer launched successfully!")
-            self.status_label.setStyleSheet("""
-                QLabel {
-                    color: #4CAF50;
-                    font-size: 14px;
-                    margin: 20px;
-                }
-            """)
             
             # Set up interaction callbacks for picking
             self.setup_picking_callback()
@@ -550,13 +354,6 @@ Watertight: {info['is_watertight']}"""
             
             # Also show in UI
             self.status_label.setText(error_msg)
-            self.status_label.setStyleSheet("""
-                QLabel {
-                    color: #ff6b6b;
-                    font-size: 14px;
-                    margin: 20px;
-                }
-            """)
             
     def create_aruco_marker_geometry(self, position: tuple, size: float, marker_id: int, rotation: tuple = (0, 0, 0)) -> o3d.geometry.TriangleMesh:
         """Create a visual representation of an ArUco marker."""
@@ -785,54 +582,6 @@ Watertight: {info['is_watertight']}"""
             print(f"❌ Error creating grid: {e}")
             return None
     
-    def create_scale_ruler(self) -> o3d.geometry.TriangleMesh:
-        """Create a scale ruler to show dimensions in the 3D viewer."""
-        if not self.mesh_info or 'dimensions' not in self.mesh_info:
-            return None
-            
-        dims = self.mesh_info['dimensions']
-        max_dim = max(dims['length'], dims['width'], dims['height'])
-        
-        # Create ruler length (15% of max dimension for better visibility)
-        ruler_length = max_dim * 0.15
-        ruler_thickness = max_dim * 0.005  # Thinner for better proportions
-        
-        # Create ruler geometry
-        ruler = o3d.geometry.TriangleMesh.create_box(ruler_length, ruler_thickness, ruler_thickness)
-        
-        # Position ruler at bottom-left of the model with proper spacing
-        bbox = self.mesh.get_axis_aligned_bounding_box()
-        spacing = max_dim * 0.05  # 5% of max dimension as spacing
-        ruler.translate([
-            bbox.min_bound[0] - spacing,
-            bbox.min_bound[1] - spacing, 
-            bbox.min_bound[2] - spacing
-        ])
-        
-        # Color the ruler
-        ruler.paint_uniform_color([1, 1, 0])  # Yellow
-        
-        # Add tick marks
-        tick_mesh = o3d.geometry.TriangleMesh()
-        num_ticks = 5
-        for i in range(num_ticks + 1):
-            tick_length = ruler_thickness * (2 if i % 5 == 0 else 1)  # Major ticks every 5
-            tick = o3d.geometry.TriangleMesh.create_box(
-                ruler_thickness * 0.5, tick_length, ruler_thickness * 0.5
-            )
-            tick.translate([
-                bbox.min_bound[0] - spacing + (i / num_ticks) * ruler_length,
-                bbox.min_bound[1] - spacing - tick_length,
-                bbox.min_bound[2] - spacing
-            ])
-            tick.paint_uniform_color([1, 1, 0])  # Yellow
-            tick_mesh += tick
-        
-        # Combine ruler and ticks
-        scale_ruler = ruler + tick_mesh
-        scale_ruler.compute_vertex_normals()
-        
-        return scale_ruler
 
     def add_marker_to_viewer(self, marker_id: int, position: tuple, size: float):
         """Add a marker to the 3D viewer."""
@@ -843,30 +592,6 @@ Watertight: {info['is_watertight']}"""
         marker_mesh = self.create_aruco_marker_geometry(position, size, marker_id)
         self.vis.add_geometry(marker_mesh)
         
-    def add_grasp_to_viewer(self, grasp_id: int, marker_id: int, position: tuple, orientation: tuple):
-        """Add a grasp pose to the 3D viewer."""
-        if self.vis is None:
-            return
-            
-        x, y, z = position
-        
-        # Create coordinate frame for grasp pose
-        grasp_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.03)
-        grasp_frame.translate([x, y, z])
-        
-        # Create approach vector (arrow)
-        arrow = o3d.geometry.TriangleMesh.create_arrow(
-            cylinder_radius=0.002,
-            cone_radius=0.005,
-            cylinder_height=0.03,
-            cone_height=0.01
-        )
-        arrow.translate([x, y, z + 0.02])
-        arrow.paint_uniform_color([0, 1, 0])  # Green
-        arrow.compute_vertex_normals()
-        
-        self.vis.add_geometry(grasp_frame)
-        self.vis.add_geometry(arrow)
         
     def add_aruco_marker(self, marker_id: int, aruco_info: ArUcoMarkerInfo) -> None:
         """Add a real ArUco marker with proper texture."""
@@ -1000,14 +725,6 @@ Watertight: {info['is_watertight']}"""
         self.placement_mode = True
         # Update status to indicate placement mode
         self.status_label.setText("Placement Mode Active\\nClick on a face to place marker")
-        self.status_label.setStyleSheet("""
-            QLabel {
-                color: #ff9800;
-                font-size: 14px;
-                font-weight: bold;
-                margin: 20px;
-            }
-        """)
         # Show the placement instruction
         self.placement_label.setVisible(True)
         # Show alternative placement buttons if available, create if needed
@@ -1021,7 +738,6 @@ Watertight: {info['is_watertight']}"""
             self.setup_alternative_placement()
         # Update mode label
         self.mode_label.setText("Mode: Place Marker")
-        self.mode_label.setStyleSheet("font-weight: bold; color: #ff9800;")
         
     def disable_placement_mode(self) -> None:
         """Disable marker placement mode."""
@@ -1035,19 +751,11 @@ Watertight: {info['is_watertight']}"""
             self.face_picker_btn.setVisible(False)
         # Restore normal mode label
         self.mode_label.setText("Mode: View")
-        self.mode_label.setStyleSheet("font-weight: bold; color: blue;")
         # Restore normal status
         if self.mesh is not None:
             vertices_count = len(self.mesh.vertices) if hasattr(self.mesh, 'vertices') else 0
             triangles_count = len(self.mesh.triangles) if hasattr(self.mesh, 'triangles') else 0
             self.status_label.setText(f"Loaded mesh:\\n{vertices_count} vertices\\n{triangles_count} faces")
-            self.status_label.setStyleSheet("""
-                QLabel {
-                    color: #4CAF50;
-                    font-size: 14px;
-                    margin: 20px;
-                }
-            """)
         
     def calculate_face_center_from_triangle(self, triangle_idx: int) -> tuple:
         """Calculate the center of a triangle face."""
@@ -1376,12 +1084,7 @@ Watertight: {info['is_watertight']}"""
             }
         """
 
-        list_button_style = random_button_style.replace('#ff9800', '#2196F3').replace('#e68900', '#1976D2').replace('#d68100', '#1565C0')
-        all_sides_button_style = random_button_style.replace('#ff9800', '#4CAF50').replace('#e68900', '#45a049').replace('#d68100', '#3d8b40')
 
-        self.click_place_btn.setStyleSheet(random_button_style)
-        self.face_picker_btn.setStyleSheet(list_button_style)
-        self.all_sides_btn.setStyleSheet(all_sides_button_style)
         
         # Add all buttons to the layout
         if hasattr(self, 'layout') and self.layout():
@@ -1966,17 +1669,6 @@ Watertight: {info['is_watertight']}"""
 
         if hasattr(self, 'placement_label'):
             self.placement_label.setText("Choose how to place ArUco marker:\n• 🎲 Quick Random • 📋 Face List • 🎯 Smart Auto")
-            self.placement_label.setStyleSheet("""
-                QLabel {
-                    background-color: #FFF3CD;
-                    color: #856404;
-                    padding: 10px;
-                    border-radius: 5px;
-                    font-weight: bold;
-                    margin: 5px;
-                    border: 1px solid #FFEAA7;
-                }
-            """)
 
         # Reset button styles and visibility
         if hasattr(self, 'click_place_btn') and self.click_place_btn is not None:
@@ -2061,28 +1753,6 @@ Watertight: {info['is_watertight']}"""
             print(f"Error highlighting face: {e}")
 
 
-    def add_grasp_pose(self, grasp_id: int, marker_id: int, position: tuple, orientation: tuple) -> None:
-        """Add a grasp pose visualization."""
-        self.grasp_poses[grasp_id] = {
-            'marker_id': marker_id,
-            'position': position,
-            'orientation': orientation
-        }
-        self.update_stats()
-        
-        # Add to 3D viewer if it's open
-        if self.vis is not None:
-            self.add_grasp_to_viewer(grasp_id, marker_id, position, orientation)
-        
-    def remove_grasp_pose(self, grasp_id: int) -> None:
-        """Remove a grasp pose from the viewer."""
-        if grasp_id in self.grasp_poses:
-            del self.grasp_poses[grasp_id]
-            self.update_stats()
-            
-    def select_grasp_pose(self, grasp_id: int) -> None:
-        """Highlight the selected grasp pose."""
-        self.update_stats()
     
     def reset_camera(self) -> None:
         """Reset camera view."""
@@ -2094,80 +1764,11 @@ Watertight: {info['is_watertight']}"""
         if self.vis is not None and self.mesh is not None:
             self.vis.reset_view_point(True)
     
-    def set_background(self, bg_type: str) -> None:
-        """Set the background color/style."""
-        if self.vis is not None:
-            render_opt = self.vis.get_render_option()
-            if bg_type == "Dark":
-                render_opt.background_color = np.asarray([0.1, 0.1, 0.1])
-            elif bg_type == "Light":
-                render_opt.background_color = np.asarray([0.9, 0.9, 0.9])
-            elif bg_type == "Gradient":
-                render_opt.background_color = np.asarray([0.2, 0.2, 0.3])
-    
-    def show_axes(self, show: bool) -> None:
-        """Show or hide coordinate axes."""
-        if self.vis is not None:
-            if show and 'coordinate_frame' not in self.geometries:
-                # Create and add coordinate frame
-                coord_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1)
-                self.vis.add_geometry(coord_frame)
-                self.geometries['coordinate_frame'] = coord_frame
-                print("🔴 Coordinate axes shown")
-            elif not show and 'coordinate_frame' in self.geometries:
-                # Remove coordinate frame
-                self.vis.remove_geometry(self.geometries['coordinate_frame'], reset_bounding_box=False)
-                del self.geometries['coordinate_frame']
-                print("⚪ Coordinate axes hidden")
-    
-    def show_grid(self, show: bool) -> None:
-        """Show or hide grid."""
-        if self.vis is not None:
-            if show and 'grid' not in self.geometries:
-                # Create and add grid
-                grid = self.create_grid()
-                if grid is not None:
-                    self.vis.add_geometry(grid)
-                    self.geometries['grid'] = grid
-                    print("📋 Grid shown")
-            elif not show and 'grid' in self.geometries:
-                # Remove grid
-                self.vis.remove_geometry(self.geometries['grid'], reset_bounding_box=False)
-                del self.geometries['grid']
-                print("📋 Grid hidden")
-    
-    def show_scale_ruler(self, show: bool) -> None:
-        """Show or hide scale ruler."""
-        if self.vis is not None:
-            if show and 'scale_ruler' not in self.geometries:
-                # Create and add scale ruler if not already created
-                if self.scale_ruler is None:
-                    self.scale_ruler = self.create_scale_ruler()
-                if self.scale_ruler is not None:
-                    self.vis.add_geometry(self.scale_ruler)
-                    self.geometries['scale_ruler'] = self.scale_ruler
-                    print("📏 Scale ruler shown")
-            elif not show and 'scale_ruler' in self.geometries:
-                # Remove scale ruler
-                self.vis.remove_geometry(self.geometries['scale_ruler'], reset_bounding_box=False)
-                del self.geometries['scale_ruler']
-                print("📏 Scale ruler hidden")
-    
-    def set_wireframe(self, wireframe: bool) -> None:
-        """Set wireframe mode."""
-        if self.vis is not None:
-            render_opt = self.vis.get_render_option()
-            render_opt.mesh_show_wireframe = wireframe
-            render_opt.mesh_show_back_face = wireframe
-            print(f"📐 Wireframe mode {'enabled' if wireframe else 'disabled'}")
-    
     def load_annotations(self, data: Dict[str, Any]) -> None:
         """Load annotations from data dictionary."""
         # Clear existing annotations
         for marker_id in list(self.markers.keys()):
             self.remove_marker(marker_id)
-        for grasp_id in list(self.grasp_poses.keys()):
-            self.remove_grasp_pose(grasp_id)
             
         # Load markers
         for marker_data in data.get("markers", []):
@@ -2177,14 +1778,6 @@ Watertight: {info['is_watertight']}"""
                 marker_data.get("size", 0.05)
             )
             
-        # Load grasp poses  
-        for grasp_data in data.get("grasp_poses", []):
-            self.add_grasp_pose(
-                grasp_data["id"],
-                grasp_data["marker_id"],
-                tuple(grasp_data["position"]),
-                tuple(grasp_data["orientation"])
-            )
     
     def update_stats(self) -> None:
         """Update the statistics display."""
@@ -2205,21 +1798,10 @@ Watertight: {info['is_watertight']}"""
             markers_text = "No ArUco markers placed"
         self.markers_text.setText(markers_text)
         
-        # Update grasp poses info
-        if self.grasp_poses:
-            grasps_text = "Defined Grasp Poses:\n"
-            for grasp_id, grasp in self.grasp_poses.items():
-                x, y, z = grasp.get('position', (0, 0, 0))
-                marker_id = grasp.get('marker_id', 0)
-                grasps_text += f"  Grasp {grasp_id} (M{marker_id}): ({x:.3f}, {y:.3f}, {z:.3f})\n"
-        else:
-            grasps_text = "No grasp poses defined"
-        self.grasps_text.setText(grasps_text)
         
         # Update main stats
         stats_text = f"""Current Session:
 Markers: {len(self.markers)}
-Grasp Poses: {len(self.grasp_poses)}
 
 Model Status:
 Loaded: {'Yes' if self.mesh is not None else 'No'}
@@ -2231,28 +1813,6 @@ Status: {'Open' if self.vis is not None else 'Closed'}"""
         
         self.stats_text.setText(stats_text)
         
-    def set_background(self, bg_type: str) -> None:
-        """Set the background color/style."""
-        if self.vis is not None:
-            render_opt = self.vis.get_render_option()
-            if bg_type == "Dark":
-                render_opt.background_color = np.asarray([0.1, 0.1, 0.1])
-            elif bg_type == "Light":
-                render_opt.background_color = np.asarray([0.9, 0.9, 0.9])
-            elif bg_type == "Gradient":
-                render_opt.background_color = np.asarray([0.2, 0.2, 0.3])
-        
-    def show_axes(self, show: bool) -> None:
-        """Show or hide coordinate axes."""
-        pass
-        
-    def show_grid(self, show: bool) -> None:
-        """Show or hide grid."""
-        pass
-        
-    def set_wireframe(self, wireframe: bool) -> None:
-        """Set wireframe mode."""
-        pass
         
     def reset_camera(self) -> None:
         """Reset camera to default position."""
@@ -2272,7 +1832,6 @@ Status: {'Open' if self.vis is not None else 'Closed'}"""
         """Load annotations from data dictionary."""
         # Clear existing annotations
         self.markers.clear()
-        self.grasp_poses.clear()
         
         # Load markers
         for marker_data in data.get("markers", []):
@@ -2282,22 +1841,14 @@ Status: {'Open' if self.vis is not None else 'Closed'}"""
                 marker_data.get("size", 0.05)
             )
             
-        # Load grasp poses
-        for grasp_data in data.get("grasp_poses", []):
-            self.add_grasp_pose(
-                grasp_data["id"],
-                grasp_data["marker_id"],
-                tuple(grasp_data["position"]),
-                tuple(grasp_data["orientation"])
-            )
             
     def set_interaction_mode(self, mode: str) -> None:
         """Set the interaction mode."""
         self.mode_label.setText(f"Mode: {mode}")
         
         if mode == "view":
-            self.mode_label.setStyleSheet("font-weight: bold; color: blue;")
+            pass
         elif mode == "place_marker":
-            self.mode_label.setStyleSheet("font-weight: bold; color: red;")
+            pass
         elif mode == "place_grasp":
-            self.mode_label.setStyleSheet("font-weight: bold; color: green;")
+            pass
