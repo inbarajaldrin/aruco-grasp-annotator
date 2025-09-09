@@ -37,6 +37,7 @@ class WorkingViewer3D(QWidget):
         self.scale_ruler: Optional[o3d.geometry.TriangleMesh] = None
         self.face_groups = None
         self.highlighted_faces = []
+        self.geometries: Dict[str, Any] = {}  # Track geometries for toggle controls
         
         self.init_ui()
         
@@ -455,12 +456,14 @@ Watertight: {info['is_watertight']}"""
             
             coord_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=coord_frame_size)
             self.vis.add_geometry(coord_frame)
+            self.geometries['coordinate_frame'] = coord_frame
             
             # Add scale ruler if mesh info is available
             if self.mesh_info:
                 self.scale_ruler = self.create_scale_ruler()
                 if self.scale_ruler:
                     self.vis.add_geometry(self.scale_ruler)
+                    self.geometries['scale_ruler'] = self.scale_ruler
             
             # Add the mesh
             self.vis.add_geometry(self.mesh)
@@ -641,7 +644,7 @@ Watertight: {info['is_watertight']}"""
         return combined_mesh
     
     def create_real_aruco_marker(self, aruco_info: ArUcoMarkerInfo) -> o3d.geometry.TriangleMesh:
-        """Create a real ArUco marker with actual marker image texture."""
+        """Create a real ArUco marker with actual pixel-perfect pattern display."""
         import cv2
         import numpy as np
         
@@ -668,109 +671,119 @@ Watertight: {info['is_watertight']}"""
             512  # High resolution
         )
         
-        # Create a thin rectangular mesh for the marker
-        marker_mesh = o3d.geometry.TriangleMesh.create_box(size, size, size/30)
-        marker_mesh.translate([x - size/2, y - size/2, z - size/60])
+        # Create pixel-based pattern - this approach works reliably and shows exact ArUco pattern
+        # Use moderate resolution for clear pattern while keeping performance good
+        display_resolution = 12  # 12x12 grid - good balance of detail vs performance
         
-        # Create texture coordinates (UV mapping)
-        # For a simple box, we'll map the top face to the ArUco marker
-        vertices = np.asarray(marker_mesh.vertices)
-        triangles = np.asarray(marker_mesh.triangles)
+        # Sample the marker image to get the pattern
+        pixel_size = size / display_resolution
+        combined_mesh = o3d.geometry.TriangleMesh()
         
-        # Simple UV mapping for the top face
-        num_vertices = len(vertices)
-        uvs = np.zeros((num_vertices, 2))
+        print(f"🎯 Creating 3D ArUco marker from 2D image: {marker_image.shape} -> {display_resolution}x{display_resolution} blocks")
         
-        for i, vertex in enumerate(vertices):
-            # Map vertex coordinates to UV space [0,1]
-            u = (vertex[0] - (x - size/2)) / size
-            v = (vertex[1] - (y - size/2)) / size
-            uvs[i] = [np.clip(u, 0, 1), np.clip(v, 0, 1)]
+        for i in range(display_resolution):
+            for j in range(display_resolution):
+                # Sample the corresponding pixel from the marker image
+                # Map from 3D grid coordinates to 2D image coordinates
+                img_x = int((i / display_resolution) * marker_image.shape[1])
+                img_y = int((j / display_resolution) * marker_image.shape[0])
+                
+                # Ensure we don't go out of bounds
+                img_x = min(img_x, marker_image.shape[1] - 1)
+                img_y = min(img_y, marker_image.shape[0] - 1)
+                
+                # Get pixel intensity (0=black, 255=white)
+                pixel_intensity = marker_image[img_y, img_x]
+                
+                # Create a small flat cube for this pixel
+                # Note: We need to flip the Y coordinate to match image orientation
+                pixel_x = x + size/2 - (i + 0.5) * pixel_size
+                pixel_y = y - size/2 + (j + 0.5) * pixel_size  # Flip Y to match image
+                pixel_z = z - size/200  # Very thin, just above the base
+                
+                pixel_cube = o3d.geometry.TriangleMesh.create_box(
+                    pixel_size * 0.98,  # Almost no gaps for cleaner look
+                    pixel_size * 0.98, 
+                    size/200  # Very thin
+                )
+                pixel_cube.translate([
+                    pixel_x - pixel_size * 0.49,
+                    pixel_y - pixel_size * 0.49,
+                    pixel_z
+                ])
+                
+                # Color based on pixel intensity
+                if pixel_intensity < 128:  # Black pixel
+                    pixel_cube.paint_uniform_color([0.0, 0.0, 0.0])
+                else:  # White pixel
+                    pixel_cube.paint_uniform_color([1.0, 1.0, 1.0])
+                
+                combined_mesh += pixel_cube
         
-        # Convert marker image to RGB for Open3D
-        marker_rgb = cv2.cvtColor(marker_image, cv2.COLOR_GRAY2RGB)
+        print(f"✅ Created 3D ArUco marker with {display_resolution*display_resolution} blocks")
         
-        # Create a distinctive color pattern since Open3D texture mapping is complex
-        # We'll create a high-contrast pattern that represents the ArUco marker
+        # Add a thin base plate for better visualization
+        base_plate = o3d.geometry.TriangleMesh.create_box(size, size, size/200)
+        base_plate.translate([x - size/2, y - size/2, z - size/400])
+        base_plate.paint_uniform_color([0.7, 0.7, 0.7])  # Light gray base
+        combined_mesh += base_plate
         
-        # Use a black and white pattern based on the marker
-        # Sample the center region of the marker to determine main pattern
-        center_region = marker_rgb[marker_rgb.shape[0]//4:3*marker_rgb.shape[0]//4, 
-                                  marker_rgb.shape[1]//4:3*marker_rgb.shape[1]//4]
-        avg_intensity = np.mean(center_region)
-        
-        # Apply color based on the marker pattern
-        if avg_intensity < 128:  # Dark pattern
-            marker_mesh.paint_uniform_color([0.1, 0.1, 0.1])  # Dark
-        else:  # Light pattern
-            marker_mesh.paint_uniform_color([0.9, 0.9, 0.9])  # Light
-        
-        # Add a border to make it look more like an ArUco marker
-        border_mesh = o3d.geometry.TriangleMesh.create_box(size*1.1, size*1.1, size/40)
-        border_mesh.translate([x - size*0.55, y - size*0.55, z - size/80])
-        border_mesh.paint_uniform_color([0.0, 0.0, 0.0])  # Black border
-        
-        # Combine border and marker
-        combined_mesh = border_mesh + marker_mesh
-        
-        # Add coordinate frame to show orientation
-        coord_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=size/3)
-        coord_frame.translate([x, y, z + size/20])
-        combined_mesh += coord_frame
-        
-        # Add text label with ArUco info (simplified representation)
-        # We'll create small cubes to represent the ID
-        id_display_size = size / 20
-        for i, digit in enumerate(str(aruco_info.marker_id)):
-            if i >= 3:  # Limit to 3 digits
-                break
-            digit_cube = o3d.geometry.TriangleMesh.create_box(id_display_size, id_display_size, id_display_size)
-            digit_cube.translate([x + (i - 1) * id_display_size * 1.5, y + size/2 + id_display_size, z])
-            digit_cube.paint_uniform_color([1, 0, 0])  # Red for ID
-            combined_mesh += digit_cube
+        # Note: Coordinate frame removed - use the main axes toggle instead
         
         # Apply rotation if specified
         if hasattr(aruco_info, 'rotation') and aruco_info.rotation != (0, 0, 0):
             roll, pitch, yaw = aruco_info.rotation
-            print(f"Applying rotation: roll={roll:.3f}, pitch={pitch:.3f}, yaw={yaw:.3f}")
-            
-            # Create rotation matrix from Euler angles
-            
-            try:
-                from scipy.spatial.transform import Rotation as R
-                # Create rotation object from Euler angles (XYZ order for better control)
-                rotation = R.from_euler('xyz', [roll, pitch, yaw], degrees=False)
-                rotation_matrix = rotation.as_matrix()
-                print(f"Rotation matrix:\n{rotation_matrix}")
-                
-                # Apply rotation around the marker center
-                center = np.array([x, y, z])
-                combined_mesh.rotate(rotation_matrix, center=center)
-                print("Rotation applied successfully")
-                
-            except ImportError:
-                # Fallback if scipy is not available - use simple rotations
-                print("Warning: scipy not available, using simple rotation fallback")
-                center = np.array([x, y, z])
-                
-                # Apply rotations one by one for better control
-                if abs(roll) > 0.001:
-                    roll_matrix = o3d.geometry.get_rotation_matrix_from_axis_angle([roll, 0, 0])
-                    combined_mesh.rotate(roll_matrix, center=center)
-                    print(f"Applied roll rotation: {roll:.3f}")
-                
-                if abs(pitch) > 0.001:
-                    pitch_matrix = o3d.geometry.get_rotation_matrix_from_axis_angle([0, pitch, 0])
-                    combined_mesh.rotate(pitch_matrix, center=center)
-                    print(f"Applied pitch rotation: {pitch:.3f}")
-                
-                if abs(yaw) > 0.001:
-                    yaw_matrix = o3d.geometry.get_rotation_matrix_from_axis_angle([0, 0, yaw])
-                    combined_mesh.rotate(yaw_matrix, center=center)
-                    print(f"Applied yaw rotation: {yaw:.3f}")
+            R = combined_mesh.get_rotation_matrix_from_xyz([roll, pitch, yaw])
+            combined_mesh.rotate(R, center=[x, y, z])
+            print(f"📐 Applied rotation to ArUco marker: ({roll:.3f}, {pitch:.3f}, {yaw:.3f}) rad")
         
+        # Compute normals for proper lighting
         combined_mesh.compute_vertex_normals()
+        
         return combined_mesh
+    
+    def create_grid(self) -> o3d.geometry.LineSet:
+        """Create a grid for the 3D viewer."""
+        try:
+            # Use mesh info to determine grid size, or default
+            if self.mesh_info and 'max_dimension' in self.mesh_info:
+                grid_size = self.mesh_info['max_dimension'] * 1.5
+            else:
+                grid_size = 1.0
+            
+            # Create grid lines
+            lines = []
+            points = []
+            grid_divisions = 10
+            step = grid_size / grid_divisions
+            
+            # Create grid points and lines
+            for i in range(grid_divisions + 1):
+                # X-direction lines
+                x = -grid_size/2 + i * step
+                points.extend([[x, -grid_size/2, 0], [x, grid_size/2, 0]])
+                line_idx = len(points) - 2
+                lines.append([line_idx, line_idx + 1])
+                
+                # Y-direction lines  
+                y = -grid_size/2 + i * step
+                points.extend([[-grid_size/2, y, 0], [grid_size/2, y, 0]])
+                line_idx = len(points) - 2
+                lines.append([line_idx, line_idx + 1])
+            
+            # Create LineSet
+            grid = o3d.geometry.LineSet()
+            grid.points = o3d.utility.Vector3dVector(points)
+            grid.lines = o3d.utility.Vector2iVector(lines)
+            
+            # Set grid color (light gray)
+            colors = [[0.5, 0.5, 0.5] for _ in range(len(lines))]
+            grid.colors = o3d.utility.Vector3dVector(colors)
+            
+            return grid
+        except Exception as e:
+            print(f"❌ Error creating grid: {e}")
+            return None
     
     def create_scale_ruler(self) -> o3d.geometry.TriangleMesh:
         """Create a scale ruler to show dimensions in the 3D viewer."""
@@ -2094,21 +2107,51 @@ Watertight: {info['is_watertight']}"""
     
     def show_axes(self, show: bool) -> None:
         """Show or hide coordinate axes."""
-        # This would be implemented with coordinate frame geometry
-        pass
+        if self.vis is not None:
+            if show and 'coordinate_frame' not in self.geometries:
+                # Create and add coordinate frame
+                coord_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1)
+                self.vis.add_geometry(coord_frame)
+                self.geometries['coordinate_frame'] = coord_frame
+                print("🔴 Coordinate axes shown")
+            elif not show and 'coordinate_frame' in self.geometries:
+                # Remove coordinate frame
+                self.vis.remove_geometry(self.geometries['coordinate_frame'], reset_bounding_box=False)
+                del self.geometries['coordinate_frame']
+                print("⚪ Coordinate axes hidden")
     
     def show_grid(self, show: bool) -> None:
         """Show or hide grid."""
-        # This would be implemented with grid geometry
-        pass
+        if self.vis is not None:
+            if show and 'grid' not in self.geometries:
+                # Create and add grid
+                grid = self.create_grid()
+                if grid is not None:
+                    self.vis.add_geometry(grid)
+                    self.geometries['grid'] = grid
+                    print("📋 Grid shown")
+            elif not show and 'grid' in self.geometries:
+                # Remove grid
+                self.vis.remove_geometry(self.geometries['grid'], reset_bounding_box=False)
+                del self.geometries['grid']
+                print("📋 Grid hidden")
     
     def show_scale_ruler(self, show: bool) -> None:
         """Show or hide scale ruler."""
-        if self.vis is not None and self.scale_ruler is not None:
-            if show:
-                self.vis.add_geometry(self.scale_ruler)
-            else:
-                self.vis.remove_geometry(self.scale_ruler, reset_bounding_box=False)
+        if self.vis is not None:
+            if show and 'scale_ruler' not in self.geometries:
+                # Create and add scale ruler if not already created
+                if self.scale_ruler is None:
+                    self.scale_ruler = self.create_scale_ruler()
+                if self.scale_ruler is not None:
+                    self.vis.add_geometry(self.scale_ruler)
+                    self.geometries['scale_ruler'] = self.scale_ruler
+                    print("📏 Scale ruler shown")
+            elif not show and 'scale_ruler' in self.geometries:
+                # Remove scale ruler
+                self.vis.remove_geometry(self.geometries['scale_ruler'], reset_bounding_box=False)
+                del self.geometries['scale_ruler']
+                print("📏 Scale ruler hidden")
     
     def set_wireframe(self, wireframe: bool) -> None:
         """Set wireframe mode."""
@@ -2116,6 +2159,7 @@ Watertight: {info['is_watertight']}"""
             render_opt = self.vis.get_render_option()
             render_opt.mesh_show_wireframe = wireframe
             render_opt.mesh_show_back_face = wireframe
+            print(f"📐 Wireframe mode {'enabled' if wireframe else 'disabled'}")
     
     def load_annotations(self, data: Dict[str, Any]) -> None:
         """Load annotations from data dictionary."""
