@@ -31,6 +31,7 @@ class WorkingViewer3D(QWidget):
         self.markers: Dict[int, Dict[str, Any]] = {}
         self.vis: Optional[o3d.visualization.Visualizer] = None
         self.edges_vis: Optional[o3d.visualization.Visualizer] = None
+        self.wireframe_vis: Optional[o3d.visualization.Visualizer] = None
         self.placement_mode = False
         self.direct_click_mode = False
         self.aruco_generator = ArUcoGenerator()
@@ -64,6 +65,10 @@ class WorkingViewer3D(QWidget):
         self.launch_edges_btn = QPushButton("Launch Edges Viewer")
         self.launch_edges_btn.clicked.connect(self.toggle_edges_viewer)
         controls_layout.addWidget(self.launch_edges_btn)
+        
+        self.launch_wireframe_btn = QPushButton("Launch Wireframe Viewer")
+        self.launch_wireframe_btn.clicked.connect(self.toggle_wireframe_viewer)
+        controls_layout.addWidget(self.launch_wireframe_btn)
         
         # Placement instruction label (for placement mode)
         self.placement_label = QLabel("Choose how to place ArUco marker:\n• 🎯 Random Face • 📋 Face List")
@@ -252,6 +257,13 @@ Watertight: {info['is_watertight']}"""
         else:
             self.close_edges_viewer()
             
+    def toggle_wireframe_viewer(self) -> None:
+        """Toggle the wireframe viewer (launch if closed, close if open)."""
+        if self.wireframe_vis is None:
+            self.launch_wireframe_viewer()
+        else:
+            self.close_wireframe_viewer()
+            
     def close_3d_viewer(self) -> None:
         """Close the 3D viewer."""
         self.cleanup_viewer()
@@ -289,6 +301,100 @@ Watertight: {info['is_watertight']}"""
             
             self.status_label.setText("Edges viewer closed")
             self.update_stats()
+            
+    def close_wireframe_viewer(self) -> None:
+        """Close the wireframe viewer."""
+        self.cleanup_wireframe_viewer()
+            
+    def cleanup_wireframe_viewer(self) -> None:
+        """Clean up the wireframe viewer when it's closed."""
+        if self.wireframe_vis is not None:
+            try:
+                self.wireframe_vis.destroy_window()
+            except:
+                pass  # Window might already be closed
+            self.wireframe_vis = None
+            
+            # Update UI
+            self.launch_wireframe_btn.setText("Launch Wireframe Viewer")
+            
+            self.status_label.setText("Wireframe viewer closed")
+            self.update_stats()
+            
+    def launch_wireframe_viewer(self) -> None:
+        """Launch the Open3D wireframe viewer showing mesh skeleton."""
+        if self.mesh is None:
+            error_msg = "Please load a model first"
+            print("ERROR:", error_msg)
+            
+            self.status_label.setText(error_msg)
+            return
+            
+        try:
+            # Create visualizer
+            self.wireframe_vis = o3d.visualization.Visualizer()
+            self.wireframe_vis.create_window(window_name="ArUco Marker Annotator - Wireframe View", 
+                                           width=800, height=600, visible=True)
+            
+            # Setup render options for wireframe mode
+            render_opt = self.wireframe_vis.get_render_option()
+            render_opt.background_color = np.asarray([0.0, 0.0, 0.0])  # Pure black background
+            render_opt.point_size = 1.0
+            render_opt.line_width = 1.0  # Thin lines for skeleton effect
+            render_opt.show_coordinate_frame = False
+            render_opt.mesh_show_wireframe = True  # Enable wireframe mode
+            render_opt.mesh_show_back_face = True  # Show back faces for complete skeleton
+            
+            # Add coordinate frame with model-relative size
+            if self.mesh_info and 'max_dimension' in self.mesh_info:
+                coord_frame_size = self.mesh_info['max_dimension'] * 0.1
+            else:
+                coord_frame_size = 0.1
+            
+            coord_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=coord_frame_size)
+            self.wireframe_vis.add_geometry(coord_frame)
+            
+            # Add the mesh in wireframe mode (skeleton format)
+            self.wireframe_vis.add_geometry(self.mesh)
+            
+            # Add existing markers (they will appear as solid objects for reference)
+            for marker_id, marker_data in self.markers.items():
+                if 'aruco_info' in marker_data:
+                    aruco_info = marker_data['aruco_info']
+                    self.add_marker_to_wireframe_viewer(marker_id, tuple(aruco_info.position), aruco_info.size)
+                else:
+                    position = marker_data.get('position', (0, 0, 0))
+                    size = marker_data.get('size', 0.05)
+                    self.add_marker_to_wireframe_viewer(marker_id, position, size)
+            
+            # Reset view
+            self.wireframe_vis.reset_view_point(True)
+            
+            # Update button text and style
+            self.launch_wireframe_btn.setText("Close Wireframe Viewer")
+            
+            self.status_label.setText("Wireframe viewer launched successfully!")
+            
+            # Setup Qt integration timer for Open3D events
+            self.setup_qt_integration_wireframe()
+            
+            # Fit to view
+            try:
+                view_control = self.wireframe_vis.get_view_control()
+                if hasattr(view_control, 'fit_in_window'):
+                    view_control.fit_in_window()
+                elif hasattr(view_control, 'zoom_in_out'):
+                    view_control.zoom_in_out(0.8)
+            except Exception as e:
+                print(f"Could not fit to view: {e}")
+            
+            print("✅ Wireframe viewer launched successfully")
+            
+        except Exception as e:
+            error_msg = f"Failed to launch wireframe viewer: {str(e)}"
+            print("ERROR:", error_msg)
+            
+            self.status_label.setText(error_msg)
             
     def extract_mesh_edges(self, mesh: o3d.geometry.TriangleMesh) -> o3d.geometry.LineSet:
         """Extract actual edges from the mesh using multiple approaches."""
@@ -781,6 +887,15 @@ Watertight: {info['is_watertight']}"""
         marker_mesh = self.create_aruco_marker_geometry(position, size, marker_id)
         self.edges_vis.add_geometry(marker_mesh)
         
+    def add_marker_to_wireframe_viewer(self, marker_id: int, position: tuple, size: float):
+        """Add a marker to the wireframe viewer."""
+        if self.wireframe_vis is None:
+            return
+            
+        # Create the enhanced ArUco marker geometry
+        marker_mesh = self.create_aruco_marker_geometry(position, size, marker_id)
+        self.wireframe_vis.add_geometry(marker_mesh)
+        
     def add_aruco_marker(self, marker_id: int, aruco_info: ArUcoMarkerInfo) -> None:
         """Add a real ArUco marker with proper texture."""
         self.markers[marker_id] = {
@@ -1194,6 +1309,24 @@ Watertight: {info['is_watertight']}"""
                 # If polling fails, stop the timer
                 if hasattr(self, 'open3d_edges_timer'):
                     self.open3d_edges_timer.stop()
+    
+    def setup_qt_integration_wireframe(self) -> None:
+        """Setup Qt timer to integrate Open3D events with Qt event loop for wireframe viewer."""
+        self.open3d_wireframe_timer = QTimer()
+        self.open3d_wireframe_timer.timeout.connect(self.update_open3d_events_wireframe)
+        self.open3d_wireframe_timer.start(16)  # ~60 FPS
+    
+    def update_open3d_events_wireframe(self) -> None:
+        """Update Open3D events to keep the wireframe visualizer responsive."""
+        if hasattr(self, 'wireframe_vis') and self.wireframe_vis is not None:
+            try:
+                # Poll events to keep the window responsive
+                self.wireframe_vis.poll_events()
+                self.wireframe_vis.update_renderer()
+            except:
+                # If polling fails, stop the timer
+                if hasattr(self, 'open3d_wireframe_timer'):
+                    self.open3d_wireframe_timer.stop()
     
     def setup_picking_callback(self) -> None:
         """Set up mouse interaction callbacks for the Open3D visualizer."""
