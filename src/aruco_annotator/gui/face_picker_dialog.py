@@ -20,36 +20,40 @@ class FacePickerDialog(QWidget):
         self.dialog_result = 0
         
         self.setWindowTitle("Select Face for ArUco Marker Placement")
-        self.setGeometry(200, 200, 600, 500)
+        # Make dialog smaller and more compact for Linux displays
+        self.setGeometry(200, 200, 550, 400)
         self.setWindowModality(Qt.WindowModality.ApplicationModal)
         self.init_ui()
         
     def init_ui(self):
         layout = QVBoxLayout(self)
+        layout.setSpacing(8)  # Reduce spacing between elements
+        layout.setContentsMargins(10, 10, 10, 10)  # Reduce margins
         
         # Title
-        title = QLabel("Choose a Face for ArUco Marker Placement")
-        title.setStyleSheet("font-size: 16px; font-weight: bold; margin: 10px;")
+        title = QLabel("Choose Face for ArUco Marker")
+        title.setStyleSheet("font-size: 14px; font-weight: bold; margin: 5px;")
         layout.addWidget(title)
         
-        # Instructions
-        instructions = QLabel("Select a face from the list below. The ArUco marker will be placed at the center of the selected face.")
+        # Instructions - more compact
+        instructions = QLabel("Select a face and click 'Place Marker Here'")
         instructions.setWordWrap(True)
-        instructions.setStyleSheet("margin: 5px; color: #666;")
+        instructions.setStyleSheet("margin: 2px; color: #666; font-size: 11px;")
         layout.addWidget(instructions)
         
-        # Face list
+        # Face list - more compact
         self.face_list = QListWidget()
+        self.face_list.setMaximumHeight(250)  # Limit height for smaller screens
         self.face_list.setStyleSheet("""
             QListWidget {
                 border: 1px solid #ccc;
                 border-radius: 4px;
-                padding: 5px;
+                padding: 3px;
                 font-family: monospace;
-                font-size: 12px;
+                font-size: 11px;
             }
             QListWidget::item {
-                padding: 8px;
+                padding: 4px;
                 border-bottom: 1px solid #eee;
             }
             QListWidget::item:selected {
@@ -65,19 +69,22 @@ class FacePickerDialog(QWidget):
         self.populate_face_list()
         layout.addWidget(self.face_list)
         
-        # Buttons
+        # Buttons - more compact
         button_layout = QHBoxLayout()
+        button_layout.setContentsMargins(0, 5, 0, 0)  # Reduce top margin
         
         self.cancel_btn = QPushButton("Cancel")
         self.cancel_btn.clicked.connect(self.reject)
+        self.cancel_btn.setFixedHeight(32)  # Fixed smaller height
         self.cancel_btn.setStyleSheet("""
             QPushButton {
                 background-color: #757575;
                 color: white;
                 border: none;
-                padding: 10px 20px;
-                border-radius: 4px;
+                padding: 6px 15px;
+                border-radius: 3px;
                 font-weight: bold;
+                font-size: 11px;
             }
             QPushButton:hover { background-color: #616161; }
         """)
@@ -85,14 +92,16 @@ class FacePickerDialog(QWidget):
         self.select_btn = QPushButton("🎯 Place Marker Here")
         self.select_btn.clicked.connect(self.accept)
         self.select_btn.setEnabled(False)
+        self.select_btn.setFixedHeight(32)  # Fixed smaller height
         self.select_btn.setStyleSheet("""
             QPushButton {
                 background-color: #4CAF50;
                 color: white;
                 border: none;
-                padding: 10px 20px;
-                border-radius: 4px;
+                padding: 6px 15px;
+                border-radius: 3px;
                 font-weight: bold;
+                font-size: 11px;
             }
             QPushButton:hover { background-color: #45a049; }
             QPushButton:disabled { background-color: #cccccc; }

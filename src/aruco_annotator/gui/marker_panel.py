@@ -57,10 +57,15 @@ class MarkerPanel(QGroupBox):
     def init_ui(self) -> None:
         """Initialize the user interface."""
         layout = QVBoxLayout(self)
+        layout.setSpacing(6)  # Reduce spacing between sections
+        layout.setContentsMargins(5, 5, 5, 5)  # Reduce margins
         
-        # ArUco Configuration section
+        # ArUco Configuration section - more compact
         aruco_config_group = QGroupBox("ArUco Configuration")
+        aruco_config_group.setStyleSheet("QGroupBox { font-size: 11px; font-weight: bold; }")
         aruco_layout = QVBoxLayout(aruco_config_group)
+        aruco_layout.setSpacing(4)  # Reduce spacing
+        aruco_layout.setContentsMargins(5, 10, 5, 5)  # Reduce margins
         
         # Dictionary selection
         dict_layout = QHBoxLayout()
@@ -106,13 +111,15 @@ class MarkerPanel(QGroupBox):
         
         layout.addLayout(add_layout)
         
-        # Marker list
+        # Marker list - more compact
         list_label = QLabel("Placed Markers:")
+        list_label.setStyleSheet("font-size: 11px; font-weight: bold; margin: 2px;")
         layout.addWidget(list_label)
         
         self.marker_list = QListWidget()
-        self.marker_list.setMaximumHeight(150)
+        self.marker_list.setMaximumHeight(120)  # Reduced height
         self.marker_list.setToolTip("List of placed ArUco markers")
+        self.marker_list.setStyleSheet("font-size: 10px;")  # Smaller font
         layout.addWidget(self.marker_list)
         
         # Marker controls
@@ -151,9 +158,12 @@ class MarkerPanel(QGroupBox):
         
         layout.addLayout(controls_layout)
         
-        # Marker movement controls
+        # Marker movement controls - more compact
         movement_group = QGroupBox("Marker Movement")
+        movement_group.setStyleSheet("QGroupBox { font-size: 11px; font-weight: bold; }")
         movement_layout = QVBoxLayout(movement_group)
+        movement_layout.setSpacing(4)  # Reduce spacing
+        movement_layout.setContentsMargins(5, 10, 5, 5)  # Reduce margins
         
         # Step size control
         step_layout = QHBoxLayout()
@@ -206,9 +216,12 @@ class MarkerPanel(QGroupBox):
         movement_layout.addLayout(direction_layout)
         layout.addWidget(movement_group)
         
-        # Marker orientation controls
+        # Marker orientation controls - more compact
         orientation_group = QGroupBox("Marker Orientation")
+        orientation_group.setStyleSheet("QGroupBox { font-size: 11px; font-weight: bold; }")
         orientation_layout = QVBoxLayout(orientation_group)
+        orientation_layout.setSpacing(4)  # Reduce spacing
+        orientation_layout.setContentsMargins(5, 10, 5, 5)  # Reduce margins
         
         # Rotation step size control (fixed at 90 degrees)
         rot_step_layout = QHBoxLayout()
@@ -281,9 +294,12 @@ class MarkerPanel(QGroupBox):
         orientation_layout.addLayout(rotation_layout)
         layout.addWidget(orientation_group)
         
-        # Position input section (for manual entry)
+        # Position input section (for manual entry) - more compact
         position_group = QGroupBox("Manual Position Entry")
+        position_group.setStyleSheet("QGroupBox { font-size: 11px; font-weight: bold; }")
         position_layout = QVBoxLayout(position_group)
+        position_layout.setSpacing(4)  # Reduce spacing
+        position_layout.setContentsMargins(5, 10, 5, 5)  # Reduce margins
         
         coords_layout = QHBoxLayout()
         

@@ -73,11 +73,20 @@ class MainWindow(QMainWindow):
         
     def create_left_panel(self) -> QWidget:
         """Create the left control panel."""
-        panel = QWidget()
-        panel.setMaximumWidth(350)
-        panel.setMinimumWidth(250)
+        from PyQt6.QtWidgets import QScrollArea
         
+        # Create a scroll area for the left panel to handle overflow
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll_area.setMaximumWidth(350)
+        scroll_area.setMinimumWidth(250)
+        
+        panel = QWidget()
         layout = QVBoxLayout(panel)
+        layout.setSpacing(8)  # Reduce spacing between sections
+        layout.setContentsMargins(5, 5, 5, 5)  # Reduce margins
         
         # File section
         file_group = QGroupBox("CAD Model")
@@ -143,7 +152,10 @@ class MainWindow(QMainWindow):
         # Add stretch to push everything to top
         layout.addStretch()
         
-        return panel
+        # Set the panel as the scroll area's widget
+        scroll_area.setWidget(panel)
+        
+        return scroll_area
         
     def create_right_panel(self) -> QWidget:
         """Create the right panel for grasp poses."""
