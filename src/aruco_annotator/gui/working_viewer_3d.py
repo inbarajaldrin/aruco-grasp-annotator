@@ -3,6 +3,8 @@
 import numpy as np
 from typing import Optional, List, Dict, Any
 from pathlib import Path
+from scipy.spatial import ConvexHull
+from sklearn.decomposition import PCA
 
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtWidgets import (
@@ -28,6 +30,7 @@ class WorkingViewer3D(QWidget):
         self.mesh: Optional[o3d.geometry.TriangleMesh] = None
         self.markers: Dict[int, Dict[str, Any]] = {}
         self.vis: Optional[o3d.visualization.Visualizer] = None
+        self.edges_vis: Optional[o3d.visualization.Visualizer] = None
         self.placement_mode = False
         self.direct_click_mode = False
         self.aruco_generator = ArUcoGenerator()
@@ -57,6 +60,10 @@ class WorkingViewer3D(QWidget):
         self.launch_3d_btn = QPushButton("Launch 3D Viewer")
         self.launch_3d_btn.clicked.connect(self.toggle_3d_viewer)
         controls_layout.addWidget(self.launch_3d_btn)
+        
+        self.launch_edges_btn = QPushButton("Launch Edges Viewer")
+        self.launch_edges_btn.clicked.connect(self.toggle_edges_viewer)
+        controls_layout.addWidget(self.launch_edges_btn)
         
         # Placement instruction label (for placement mode)
         self.placement_label = QLabel("Choose how to place ArUco marker:\n• 🎯 Random Face • 📋 Face List")
@@ -238,6 +245,13 @@ Watertight: {info['is_watertight']}"""
         else:
             self.close_3d_viewer()
             
+    def toggle_edges_viewer(self) -> None:
+        """Toggle the edges viewer (launch if closed, close if open)."""
+        if self.edges_vis is None:
+            self.launch_edges_viewer()
+        else:
+            self.close_edges_viewer()
+            
     def close_3d_viewer(self) -> None:
         """Close the 3D viewer."""
         self.cleanup_viewer()
@@ -256,6 +270,172 @@ Watertight: {info['is_watertight']}"""
             
             self.status_label.setText("3D viewer closed")
             self.update_stats()
+            
+    def close_edges_viewer(self) -> None:
+        """Close the edges viewer."""
+        self.cleanup_edges_viewer()
+            
+    def cleanup_edges_viewer(self) -> None:
+        """Clean up the edges viewer when it's closed."""
+        if self.edges_vis is not None:
+            try:
+                self.edges_vis.destroy_window()
+            except:
+                pass  # Window might already be closed
+            self.edges_vis = None
+            
+            # Update UI
+            self.launch_edges_btn.setText("Launch Edges Viewer")
+            
+            self.status_label.setText("Edges viewer closed")
+            self.update_stats()
+            
+    def extract_mesh_edges(self, mesh: o3d.geometry.TriangleMesh) -> o3d.geometry.LineSet:
+        """Extract actual edges from the mesh using multiple approaches."""
+        try:
+            # Get vertices and triangles
+            vertices = np.asarray(mesh.vertices)
+            triangles = np.asarray(mesh.triangles)
+            
+            # Method 1: Use convex hull edges
+            try:
+                hull = ConvexHull(vertices)
+                # Extract only true boundary edges from convex hull
+                edge_count = {}
+                boundary_edges = []
+                
+                # Count how many times each edge appears in the convex hull
+                for simplex in hull.simplices:
+                    for i in range(len(simplex)):
+                        v1, v2 = simplex[i], simplex[(i + 1) % len(simplex)]
+                        edge = tuple(sorted([v1, v2]))
+                        edge_count[edge] = edge_count.get(edge, 0) + 1
+                
+                # Only keep edges that appear exactly once (true boundary edges)
+                boundary_edges = [edge for edge, count in edge_count.items() if count == 1]
+                
+                # Debug: print edge counts
+                print(f"Total edges found: {len(edge_count)}")
+                print(f"Boundary edges (count=1): {len(boundary_edges)}")
+                print(f"Edge counts: {dict(list(edge_count.items())[:5])}")  # Show first 5 edge counts
+                
+                # If no boundary edges found, use all edges as fallback
+                if len(boundary_edges) == 0:
+                    print("No boundary edges found, using all edges as fallback")
+                    boundary_edges = list(edge_count.keys())
+            except Exception as e:
+                # Fallback: use all edges
+                pass  # No fallback - let angle-based detection handle it
+            
+            # Create line set from boundary edges
+            if len(boundary_edges) > 0:
+                lines = []
+                for edge in boundary_edges:
+                    lines.append([edge[0], edge[1]])
+                
+                line_set = o3d.geometry.LineSet()
+                line_set.points = o3d.utility.Vector3dVector(vertices)
+                line_set.lines = o3d.utility.Vector2iVector(lines)
+                
+                # Set edge color (bright yellow for visibility)
+                colors = [[1.0, 1.0, 0.0] for _ in range(len(lines))]
+                line_set.colors = o3d.utility.Vector3dVector(colors)
+                
+                return line_set
+            else:
+                return o3d.geometry.LineSet()
+                
+        except Exception as e:
+            return o3d.geometry.LineSet()
+    
+#     def _detect_edges_by_normal_angle(self, mesh: o3d.geometry.TriangleMesh, edge_count: dict, edge_to_triangles: dict) -> List[tuple]:
+#         """Detect edges based on angle between adjacent triangle normals."""
+#         try:
+#             # Compute triangle normals
+#             mesh.compute_triangle_normals()
+#             triangle_normals = np.asarray(mesh.triangle_normals)
+#             
+#             edge_angles = {}
+#             for edge, triangles in edge_to_triangles.items():
+#                 if len(triangles) == 2:
+#                     # Get normals of adjacent triangles
+#                     n1 = triangle_normals[triangles[0]]
+#                     n2 = triangle_normals[triangles[1]]
+#                     
+#                     # Compute angle between normals
+#                     cos_angle = np.dot(n1, n2) / (np.linalg.norm(n1) * np.linalg.norm(n2))
+#                     cos_angle = np.clip(cos_angle, -1.0, 1.0)
+#                     angle = np.arccos(cos_angle)
+#                     
+#                     edge_angles[edge] = angle
+#             
+#             # Find edges with significant angle difference (sharp edges)
+#             threshold_angle = np.pi / 6  # 30 degrees
+#             sharp_edges = [edge for edge, angle in edge_angles.items() if angle > threshold_angle]
+#             
+#             return sharp_edges
+#             
+#         except Exception as e:
+#             return []
+#             
+    def launch_edges_viewer(self) -> None:
+        """Launch the Open3D edges viewer showing actual geometric edges."""
+        if self.mesh is None:
+            error_msg = "Please load a model first"
+            print("ERROR:", error_msg)
+            
+            self.status_label.setText(error_msg)
+            return
+            
+        try:
+            # Create visualizer
+            self.edges_vis = o3d.visualization.Visualizer()
+            self.edges_vis.create_window(window_name="ArUco Marker Annotator - Edges View", 
+                                       width=800, height=600, visible=True)
+            
+            # Setup render options - clean edges-only view
+            render_opt = self.edges_vis.get_render_option()
+            render_opt.background_color = np.asarray([0.0, 0.0, 0.0])  # Pure black background
+            render_opt.point_size = 1.0
+            render_opt.line_width = 2.0  # Clean line width
+            render_opt.show_coordinate_frame = False
+            
+            # Extract and add ONLY the edges (nothing else)
+            edge_lines = self.extract_mesh_edges(self.mesh)
+            if len(edge_lines.points) > 0:
+                self.edges_vis.add_geometry(edge_lines)
+                self.status_label.setText(f"Edges viewer: {len(edge_lines.lines)} edges displayed")
+            else:
+                self.status_label.setText("Edges viewer: No edges found")
+            
+            # Reset view
+            self.edges_vis.reset_view_point(True)
+            
+            # Update button text and style
+            self.launch_edges_btn.setText("Close Edges Viewer")
+            
+            self.status_label.setText("Edges viewer launched successfully!")
+            
+            # Setup Qt integration timer for Open3D events
+            self.setup_qt_integration_edges()
+            
+            # Fit to view
+            try:
+                view_control = self.edges_vis.get_view_control()
+                if hasattr(view_control, 'fit_in_window'):
+                    view_control.fit_in_window()
+                elif hasattr(view_control, 'zoom_in_out'):
+                    view_control.zoom_in_out(0.8)
+            except Exception as e:
+                print(f"Could not fit to view: {e}")
+            
+            print("✅ Edges viewer launched successfully")
+            
+        except Exception as e:
+            error_msg = f"Failed to launch edges viewer: {str(e)}"
+            print("ERROR:", error_msg)
+            
+            self.status_label.setText(error_msg)
             
     def launch_3d_viewer(self) -> None:
         """Launch the Open3D 3D viewer."""
@@ -592,6 +772,14 @@ Watertight: {info['is_watertight']}"""
         marker_mesh = self.create_aruco_marker_geometry(position, size, marker_id)
         self.vis.add_geometry(marker_mesh)
         
+    def add_marker_to_edges_viewer(self, marker_id: int, position: tuple, size: float):
+        """Add a marker to the edges viewer."""
+        if self.edges_vis is None:
+            return
+            
+        # Create the enhanced ArUco marker geometry
+        marker_mesh = self.create_aruco_marker_geometry(position, size, marker_id)
+        self.edges_vis.add_geometry(marker_mesh)
         
     def add_aruco_marker(self, marker_id: int, aruco_info: ArUcoMarkerInfo) -> None:
         """Add a real ArUco marker with proper texture."""
@@ -615,6 +803,18 @@ Watertight: {info['is_watertight']}"""
                 marker_mesh = self.create_aruco_marker_geometry(aruco_info.position, aruco_info.size, marker_id)
                 self.markers[marker_id]['geometry'] = marker_mesh
                 self.vis.add_geometry(marker_mesh)
+        
+        # Add to edges viewer if it's open
+        if self.edges_vis is not None:
+            try:
+                # Create ArUco marker with actual image texture
+                marker_mesh = self.create_real_aruco_marker(aruco_info)
+                self.edges_vis.add_geometry(marker_mesh)
+            except Exception as e:
+                print(f"Failed to create ArUco marker for edges viewer: {e}")
+                # Fallback to geometric representation
+                marker_mesh = self.create_aruco_marker_geometry(aruco_info.position, aruco_info.size, marker_id)
+                self.edges_vis.add_geometry(marker_mesh)
     
     def add_marker(self, marker_id: int, position: tuple, size: float = 0.05) -> None:
         """Add an ArUco marker visualization (legacy method)."""
@@ -633,6 +833,8 @@ Watertight: {info['is_watertight']}"""
             marker = self.markers[marker_id]
             if marker['geometry'] is not None and self.vis is not None:
                 self.vis.remove_geometry(marker['geometry'], reset_bounding_box=False)
+            if marker['geometry'] is not None and self.edges_vis is not None:
+                self.edges_vis.remove_geometry(marker['geometry'], reset_bounding_box=False)
             del self.markers[marker_id]
             self.update_stats()
             
@@ -974,6 +1176,24 @@ Watertight: {info['is_watertight']}"""
                 # If polling fails, stop the timer
                 if hasattr(self, 'open3d_timer'):
                     self.open3d_timer.stop()
+    
+    def setup_qt_integration_edges(self) -> None:
+        """Setup Qt timer to integrate Open3D events with Qt event loop for edges viewer."""
+        self.open3d_edges_timer = QTimer()
+        self.open3d_edges_timer.timeout.connect(self.update_open3d_events_edges)
+        self.open3d_edges_timer.start(16)  # ~60 FPS
+    
+    def update_open3d_events_edges(self) -> None:
+        """Update Open3D events to keep the edges visualizer responsive."""
+        if hasattr(self, 'edges_vis') and self.edges_vis is not None:
+            try:
+                # Poll events to keep the window responsive
+                self.edges_vis.poll_events()
+                self.edges_vis.update_renderer()
+            except:
+                # If polling fails, stop the timer
+                if hasattr(self, 'open3d_edges_timer'):
+                    self.open3d_edges_timer.stop()
     
     def setup_picking_callback(self) -> None:
         """Set up mouse interaction callbacks for the Open3D visualizer."""
