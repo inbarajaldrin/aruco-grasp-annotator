@@ -296,7 +296,7 @@ class MainWindow(QMainWindow):
                 
                 # Update UI with dimension information
                 dim_text = f"Loaded: {self.current_file.name}\n"
-                dim_text += f"Dimensions: {dimensions['length']:.3f} × {dimensions['width']:.3f} × {dimensions['height']:.3f} m\n"
+                dim_text += f"Dimensions: {dimensions['length']:.4f} × {dimensions['width']:.4f} × {dimensions['height']:.4f} m\n"
                 dim_text += f"Vertices: {mesh_info['vertices']:,} | Faces: {mesh_info['triangles']:,}\n"
                 if selected_units == "Auto-detect":
                     dim_text += f"Detected input units: {detected_units}"
@@ -351,14 +351,14 @@ class MainWindow(QMainWindow):
         info_text = f"""
 <b>CAD Model Dimensions (Converted to Meters):</b><br><br>
 <font size="+1">
-Length (X): {dimensions['length']:.3f} m<br>
-Width (Y):  {dimensions['width']:.3f} m<br>
-Height (Z): {dimensions['height']:.3f} m<br>
+Length (X): {dimensions['length']:.4f} m<br>
+Width (Y):  {dimensions['width']:.4f} m<br>
+Height (Z): {dimensions['height']:.4f} m<br>
 </font><br>
 <b>Model Statistics:</b><br>
 • Vertices: {mesh_info['vertices']:,}<br>
 • Faces: {mesh_info['triangles']:,}<br>
-• Max Dimension: {mesh_info['max_dimension']:.3f} m<br>
+• Max Dimension: {mesh_info['max_dimension']:.4f} m<br>
 • Volume: {mesh_info['volume']:.6f} m³<br>
 • Surface Area: {mesh_info['surface_area']:.6f} m²<br><br>
 <font color="blue">

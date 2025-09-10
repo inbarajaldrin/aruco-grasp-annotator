@@ -182,7 +182,7 @@ class WorkingViewer3D(QWidget):
             triangles_count = mesh_info.get('triangles', 0)
             
             status_text = f"✅ Model loaded successfully\\n"
-            status_text += f"📐 Dimensions: {dims['length']:.3f} × {dims['width']:.3f} × {dims['height']:.3f} m\\n"
+            status_text += f"📐 Dimensions: {dims['length']:.4f} × {dims['width']:.4f} × {dims['height']:.4f} m\\n"
             status_text += f"🔺 Geometry: {vertices_count:,} vertices | {triangles_count:,} faces"
             
             # Add volume and surface area if available
@@ -649,7 +649,7 @@ Watertight: {info['is_watertight']}"""
         roll, pitch, yaw = rotation
         
         # Use the exact size specified by the user - no proportional scaling
-        print(f"📐 Model max dimension: {self.mesh_info['max_dimension']:.3f}m" if self.mesh_info and 'max_dimension' in self.mesh_info else "📐 No model info available")
+        print(f"📐 Model max dimension: {self.mesh_info['max_dimension']:.4f}m" if self.mesh_info and 'max_dimension' in self.mesh_info else "📐 No model info available")
         print(f"🎯 Using exact user-specified size: {size:.3f}m")
         
         # Only apply basic safety limits to prevent extremely small or large markers
@@ -739,7 +739,7 @@ Watertight: {info['is_watertight']}"""
         print(f"🎯 ArUco marker size: User input = {aruco_info.size:.3f}m")
         
         # Use the exact size specified by the user - no proportional scaling
-        print(f"📐 Model max dimension: {self.mesh_info['max_dimension']:.3f}m" if self.mesh_info and 'max_dimension' in self.mesh_info else "📐 No model info available")
+        print(f"📐 Model max dimension: {self.mesh_info['max_dimension']:.4f}m" if self.mesh_info and 'max_dimension' in self.mesh_info else "📐 No model info available")
         print(f"🎯 Using exact user-specified size: {size:.3f}m")
         
         # Only apply basic safety limits to prevent extremely small or large markers
@@ -1518,9 +1518,9 @@ Watertight: {info['is_watertight']}"""
                     center = (bbox_min + bbox_max) / 2.0
                     
                     print(f"   Using CAD model dimensions:")
-                    print(f"   Length (X): {cad_dims['length']:.3f} m")
-                    print(f"   Width (Y):  {cad_dims['width']:.3f} m") 
-                    print(f"   Height (Z): {cad_dims['height']:.3f} m")
+                    print(f"   Length (X): {cad_dims['length']:.4f} m")
+                    print(f"   Width (Y):  {cad_dims['width']:.4f} m") 
+                    print(f"   Height (Z): {cad_dims['height']:.4f} m")
                     print(f"   CAD Center: ({center[0]:.3f}, {center[1]:.3f}, {center[2]:.3f})")
                     
                     min_bound = bbox_min
@@ -1538,40 +1538,41 @@ Watertight: {info['is_watertight']}"""
                     print(f"   Runtime center: ({center[0]:.3f}, {center[1]:.3f}, {center[2]:.3f})")
                 
                 # Define the 6 orthogonal faces with their normal vectors
+                # Note: Normals point INWARD toward the object center for proper ArUco orientation
                 faces = [
                     # X-axis faces (Left and Right)
                     {
                         'center': np.array([min_bound[0], center[1], center[2]]),
-                        'normal': np.array([-1.0, 0.0, 0.0]),
+                        'normal': np.array([1.0, 0.0, 0.0]),  # Inward (toward center)
                         'name': "Left Face (-X)"
                     },
                     {
                         'center': np.array([max_bound[0], center[1], center[2]]),
-                        'normal': np.array([1.0, 0.0, 0.0]),
+                        'normal': np.array([-1.0, 0.0, 0.0]),  # Inward (toward center)
                         'name': "Right Face (+X)"
                     },
                     
                     # Y-axis faces (Front and Back)
                     {
                         'center': np.array([center[0], min_bound[1], center[2]]),
-                        'normal': np.array([0.0, -1.0, 0.0]),
+                        'normal': np.array([0.0, 1.0, 0.0]),  # Inward (toward center)
                         'name': "Front Face (-Y)"
                     },
                     {
                         'center': np.array([center[0], max_bound[1], center[2]]),
-                        'normal': np.array([0.0, 1.0, 0.0]),
+                        'normal': np.array([0.0, -1.0, 0.0]),  # Inward (toward center)
                         'name': "Back Face (+Y)"
                     },
                     
                     # Z-axis faces (Bottom and Top)
                     {
                         'center': np.array([center[0], center[1], min_bound[2]]),
-                        'normal': np.array([0.0, 0.0, -1.0]),
+                        'normal': np.array([0.0, 0.0, 1.0]),  # Inward (toward center)
                         'name': "Bottom Face (-Z)"
                     },
                     {
                         'center': np.array([center[0], center[1], max_bound[2]]),
-                        'normal': np.array([0.0, 0.0, 1.0]),
+                        'normal': np.array([0.0, 0.0, -1.0]),  # Inward (toward center)
                         'name': "Top Face (+Z)"
                     }
                 ]
@@ -1603,7 +1604,7 @@ Watertight: {info['is_watertight']}"""
                 # Show summary of dimensions used
                 if self.mesh_info and 'dimensions' in self.mesh_info:
                     cad_dims = self.mesh_info['dimensions']
-                    print(f"📐 Used CAD model dimensions: {cad_dims['length']:.3f} × {cad_dims['width']:.3f} × {cad_dims['height']:.3f} m")
+                    print(f"📐 Used CAD model dimensions: {cad_dims['length']:.4f} × {cad_dims['width']:.4f} × {cad_dims['height']:.4f} m")
                     if 'volume' in self.mesh_info and self.mesh_info['volume'] > 0:
                         print(f"📊 Model volume: {self.mesh_info['volume']:.6f} m³")
                     if 'surface_area' in self.mesh_info and self.mesh_info['surface_area'] > 0:
@@ -1625,34 +1626,40 @@ Watertight: {info['is_watertight']}"""
             print("⚠️ Not in placement mode or no mesh loaded")
     
     def _project_to_surface_with_raycast(self, face_center, face_normal, triangles, vertices):
-        """Project from face center to the actual surface using ray casting."""
+        """Project from face center to the actual surface using improved ray casting for complex shapes."""
         try:
             print(f"     Ray casting from face center to surface...")
             
-            # Cast ray from face center inward along the negative normal
-            ray_origin = face_center
-            ray_direction = -face_normal  # Point inward toward the object
+            # For complex shapes, try multiple ray directions to find the best surface point
+            ray_origins = [
+                face_center,  # Original face center
+                face_center + face_normal * 0.001,  # Slightly offset outward
+                face_center - face_normal * 0.001,  # Slightly offset inward
+            ]
             
-            # Find intersection with mesh triangles
-            intersection_point = self._ray_triangle_intersection(
-                ray_origin, ray_direction, triangles, vertices
-            )
+            best_intersection = None
+            best_distance = float('inf')
             
-            if intersection_point is not None:
-                print(f"     Ray intersection found at distance {np.linalg.norm(intersection_point - ray_origin):.3f}")
-                return intersection_point
+            for ray_origin in ray_origins:
+                # Try both inward and outward directions
+                for direction_multiplier in [-1, 1]:
+                    ray_direction = face_normal * direction_multiplier
+                    
+                    intersection_point = self._ray_triangle_intersection(
+                        ray_origin, ray_direction, triangles, vertices
+                    )
+                    
+                    if intersection_point is not None:
+                        distance = np.linalg.norm(intersection_point - face_center)
+                        if distance < best_distance:
+                            best_distance = distance
+                            best_intersection = intersection_point
             
-            # Fallback 1: Try ray in opposite direction (outward)
-            ray_direction = face_normal  # Point outward from the object
-            intersection_point = self._ray_triangle_intersection(
-                ray_origin, ray_direction, triangles, vertices
-            )
+            if best_intersection is not None:
+                print(f"     Ray intersection found at distance {best_distance:.3f}")
+                return best_intersection
             
-            if intersection_point is not None:
-                print(f"     Reverse ray intersection found at distance {np.linalg.norm(intersection_point - ray_origin):.3f}")
-                return intersection_point
-            
-            # Fallback 2: Find closest surface point using triangle analysis
+            # Fallback: Find closest surface point using triangle analysis
             print(f"     No ray intersection found, finding closest surface point...")
             return self._find_closest_surface_point(face_center, face_normal, triangles, vertices)
                 
