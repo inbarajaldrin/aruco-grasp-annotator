@@ -761,11 +761,19 @@ Watertight: {info['is_watertight']}"""
         # Use moderate resolution for clear pattern while keeping performance good
         display_resolution = 12  # 12x12 grid - good balance of detail vs performance
         
+        # Calculate border width in actual units
+        border_width_units = size * aruco_info.border_width
+        
+        # Calculate the actual pattern area (reduced by border)
+        pattern_size = size - 2 * border_width_units
+        
         # Sample the marker image to get the pattern
-        pixel_size = size / display_resolution
+        pixel_size = pattern_size / display_resolution
         combined_mesh = o3d.geometry.TriangleMesh()
         
         print(f"🎯 Creating 3D ArUco marker from 2D image: {marker_image.shape} -> {display_resolution}x{display_resolution} blocks")
+        print(f"🎯 Border width: {aruco_info.border_width*100:.1f}% ({border_width_units*1000:.1f}mm)")
+        print(f"🎯 Pattern area: {pattern_size*1000:.1f}mm (reduced from {size*1000:.1f}mm total)")
         
         for i in range(display_resolution):
             for j in range(display_resolution):
@@ -783,8 +791,9 @@ Watertight: {info['is_watertight']}"""
                 
                 # Create a small flat cube for this pixel
                 # Note: We need to flip the Y coordinate to match image orientation
-                pixel_x = x + size/2 - (i + 0.5) * pixel_size
-                pixel_y = y - size/2 + (j + 0.5) * pixel_size  # Flip Y to match image
+                # Position pixels within the pattern area (excluding border)
+                pixel_x = x + pattern_size/2 - (i + 0.5) * pixel_size
+                pixel_y = y - pattern_size/2 + (j + 0.5) * pixel_size  # Flip Y to match image
                 pixel_z = z - size/200  # Very thin, just above the base
                 
                 pixel_cube = o3d.geometry.TriangleMesh.create_box(
@@ -807,6 +816,20 @@ Watertight: {info['is_watertight']}"""
                 combined_mesh += pixel_cube
         
         print(f"✅ Created 3D ArUco marker with {display_resolution*display_resolution} blocks")
+        
+        # Add white border around the pattern if border width > 0
+        if aruco_info.border_width > 0:
+            # Create white border by adding a larger white rectangle behind the pattern
+            border_plate = o3d.geometry.TriangleMesh.create_box(size, size, size/300)
+            border_plate.translate([x - size/2, y - size/2, z - size/600])
+            border_plate.paint_uniform_color([1.0, 1.0, 1.0])  # White border
+            combined_mesh += border_plate
+            
+            # Add a slightly smaller black rectangle to create the border effect
+            inner_plate = o3d.geometry.TriangleMesh.create_box(pattern_size, pattern_size, size/250)
+            inner_plate.translate([x - pattern_size/2, y - pattern_size/2, z - size/500])
+            inner_plate.paint_uniform_color([0.0, 0.0, 0.0])  # Black inner area
+            combined_mesh += inner_plate
         
         # Add a thin base plate for better visualization
         base_plate = o3d.geometry.TriangleMesh.create_box(size, size, size/200)

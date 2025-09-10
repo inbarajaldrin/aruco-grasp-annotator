@@ -118,12 +118,13 @@ class ArUcoMarkerInfo:
     """Container for ArUco marker information."""
     
     def __init__(self, dictionary: str, marker_id: int, position: Tuple[float, float, float], 
-                 size: float, rotation: Tuple[float, float, float] = (0, 0, 0)):
+                 size: float, rotation: Tuple[float, float, float] = (0, 0, 0), border_width: float = 0.1):
         self.dictionary = dictionary
         self.marker_id = marker_id
         self.position = position
         self.size = size
         self.rotation = rotation  # Euler angles in radians
+        self.border_width = border_width  # Border width as percentage (0.0 to 0.5)
         
     def to_dict(self) -> Dict:
         """Convert to dictionary for serialization."""
@@ -132,7 +133,8 @@ class ArUcoMarkerInfo:
             "marker_id": self.marker_id,
             "position": list(self.position),
             "size": self.size,
-            "rotation": list(self.rotation)
+            "rotation": list(self.rotation),
+            "border_width": self.border_width
         }
     
     @classmethod
@@ -143,7 +145,8 @@ class ArUcoMarkerInfo:
             marker_id=data["marker_id"],
             position=tuple(data["position"]),
             size=data["size"],
-            rotation=tuple(data.get("rotation", (0, 0, 0)))
+            rotation=tuple(data.get("rotation", (0, 0, 0))),
+            border_width=data.get("border_width", 0.1)
         )
     
     def __str__(self) -> str:

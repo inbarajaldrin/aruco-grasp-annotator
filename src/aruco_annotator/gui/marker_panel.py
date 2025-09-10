@@ -96,9 +96,22 @@ class MarkerPanel(QGroupBox):
         self.size_spinbox.setDecimals(4)  # Allow 4 decimal places (0.0001m = 0.1mm precision)
         self.size_spinbox.setSuffix(" m")
         self.size_spinbox.setToolTip("Physical size of the ArUco marker")
-        self.size_spinbox.setValue(0.025)
+        self.size_spinbox.setValue(0.03)
         size_layout.addWidget(self.size_spinbox)
         aruco_layout.addLayout(size_layout)
+        
+        # Border width control
+        border_layout = QHBoxLayout()
+        border_layout.addWidget(QLabel("Border Width:"))
+        self.border_spinbox = QDoubleSpinBox()
+        self.border_spinbox.setRange(0.0, 0.5)  # Allow 0% to 50% of marker size
+        self.border_spinbox.setSingleStep(0.01)
+        self.border_spinbox.setDecimals(3)  # Allow 3 decimal places
+        self.border_spinbox.setSuffix(" %")
+        self.border_spinbox.setToolTip("White border width as percentage of marker size (0% = no border, 10% = 10% border)")
+        self.border_spinbox.setValue(0.2)  # Default 10% border
+        border_layout.addWidget(self.border_spinbox)
+        aruco_layout.addLayout(border_layout)
         
         layout.addWidget(aruco_config_group)
         
@@ -435,6 +448,7 @@ class MarkerPanel(QGroupBox):
         dictionary = self.dict_combo.currentText()
         aruco_id = self.marker_id_spinbox.value()
         size = self.size_spinbox.value()
+        border_width = self.border_spinbox.value()
         
         # Check if this ArUco ID is already used
         for existing_item in self.markers.values():
@@ -464,7 +478,8 @@ class MarkerPanel(QGroupBox):
             marker_id=aruco_id,
             position=position,
             size=size,
-            rotation=rotation  # Add rotation based on surface normal
+            rotation=rotation,  # Add rotation based on surface normal
+            border_width=border_width
         )
         
         # Create list item
