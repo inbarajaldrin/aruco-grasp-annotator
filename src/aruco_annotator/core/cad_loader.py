@@ -134,17 +134,17 @@ class CADLoader:
         extent = bbox.get_extent()
         max_dim = np.max(extent)
         
-        # Heuristics for unit detection:
+        # Heuristics for unit detection: (need to fix in future)
         # - If max dimension > 10, likely in mm (convert to m: /1000)
         # - If max dimension between 0.1 and 10, likely in cm (convert to m: /100)  
         # - If max dimension < 0.1, likely already in m (no conversion)
         
         if max_dim > 10:
-            return 0.001  # mm to m
+            return 0.01  
         elif max_dim > 0.1:
-            return 0.01   # cm to m
+            return 0.1   
         else:
-            return 1.0    # already in m
+            return 1.0   
     
     def _get_conversion_factor(self, input_units: str) -> float:
         """Get conversion factor from input units to meters."""

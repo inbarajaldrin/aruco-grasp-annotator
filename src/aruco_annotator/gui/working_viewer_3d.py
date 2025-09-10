@@ -788,13 +788,13 @@ Watertight: {info['is_watertight']}"""
                 pixel_z = z - size/200  # Very thin, just above the base
                 
                 pixel_cube = o3d.geometry.TriangleMesh.create_box(
-                    pixel_size * 0.98,  # Almost no gaps for cleaner look
-                    pixel_size * 0.98, 
+                    pixel_size,  # Full pixel size - no gaps
+                    pixel_size, 
                     size/200  # Very thin
                 )
                 pixel_cube.translate([
-                    pixel_x - pixel_size * 0.49,
-                    pixel_y - pixel_size * 0.49,
+                    pixel_x - pixel_size * 0.5,
+                    pixel_y - pixel_size * 0.5,
                     pixel_z
                 ])
                 

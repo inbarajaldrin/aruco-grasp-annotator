@@ -91,12 +91,12 @@ class MarkerPanel(QGroupBox):
         size_layout = QHBoxLayout()
         size_layout.addWidget(QLabel("Size:"))
         self.size_spinbox = QDoubleSpinBox()
-        self.size_spinbox.setRange(0.0025, 1.0)  # Allow 1mm to 1m
-        self.size_spinbox.setValue(0.001)
+        self.size_spinbox.setRange(0.001, 1.0)  # Allow 1mm to 1m
         self.size_spinbox.setSingleStep(0.01)
         self.size_spinbox.setDecimals(4)  # Allow 4 decimal places (0.0001m = 0.1mm precision)
         self.size_spinbox.setSuffix(" m")
         self.size_spinbox.setToolTip("Physical size of the ArUco marker")
+        self.size_spinbox.setValue(0.025)
         size_layout.addWidget(self.size_spinbox)
         aruco_layout.addLayout(size_layout)
         
