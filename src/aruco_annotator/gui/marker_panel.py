@@ -1,12 +1,12 @@
 """Panel for managing ArUco markers on the 3D model."""
 
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
     QPushButton, QListWidget, QListWidgetItem, QLabel,
     QSpinBox, QDoubleSpinBox, QInputDialog, QMessageBox,
-    QComboBox
+    QComboBox, QTextEdit
 )
 
 from ..utils.aruco_utils import ArUcoGenerator, ArUcoMarkerInfo
@@ -22,9 +22,10 @@ class MarkerListItem(QListWidgetItem):
         self.update_text()
         
     def update_text(self) -> None:
-        """Update the display text."""
+        """Update the display text with pose information."""
         x, y, z = self.aruco_info.position
-        self.setText(f"ArUco {self.marker_id}: {self.aruco_info.dictionary} ID:{self.aruco_info.marker_id} ({x:.3f}, {y:.3f}, {z:.3f})")
+        pose_summary = self.aruco_info.get_pose_summary()
+        self.setText(f"ArUco {self.marker_id}: {self.aruco_info.dictionary} ID:{self.aruco_info.marker_id} ({x:.3f}, {y:.3f}, {z:.3f}) - {pose_summary}")
         
     def get_data(self) -> Dict[str, Any]:
         """Get marker data as dictionary."""
@@ -170,6 +171,39 @@ class MarkerPanel(QGroupBox):
         controls_layout.addWidget(self.delete_all_button)
         
         layout.addLayout(controls_layout)
+        
+        # Detailed pose information section
+        pose_info_group = QGroupBox("Marker Pose Information")
+        pose_info_group.setStyleSheet("QGroupBox { font-size: 11px; font-weight: bold; }")
+        pose_info_layout = QVBoxLayout(pose_info_group)
+        pose_info_layout.setSpacing(4)
+        pose_info_layout.setContentsMargins(5, 10, 5, 5)
+        
+        # Pose information display
+        self.pose_info_text = QTextEdit()
+        self.pose_info_text.setMaximumHeight(120)
+        self.pose_info_text.setReadOnly(True)
+        self.pose_info_text.setStyleSheet("""
+            QTextEdit {
+                font-family: 'Courier New', monospace;
+                font-size: 9px;
+                background-color: #f5f5f5;
+                border: 1px solid #cccccc;
+                border-radius: 3px;
+            }
+        """)
+        self.pose_info_text.setPlaceholderText("Select a marker to view detailed pose information...")
+        pose_info_layout.addWidget(self.pose_info_text)
+        
+        # Wireframe attachment info
+        wireframe_layout = QHBoxLayout()
+        wireframe_layout.addWidget(QLabel("Wireframe Attachment:"))
+        self.wireframe_attachment_label = QLabel("N/A")
+        self.wireframe_attachment_label.setStyleSheet("font-family: 'Courier New', monospace; font-size: 9px; color: #0066cc;")
+        wireframe_layout.addWidget(self.wireframe_attachment_label)
+        pose_info_layout.addLayout(wireframe_layout)
+        
+        layout.addWidget(pose_info_group)
         
         # Marker movement controls - more compact
         movement_group = QGroupBox("Marker Movement")
@@ -482,6 +516,9 @@ class MarkerPanel(QGroupBox):
             border_width=border_width
         )
         
+        # Update CAD object pose information
+        self._update_marker_cad_pose(aruco_info, position, normal)
+        
         # Create list item
         item = MarkerListItem(marker_id, aruco_info)
         self.markers[marker_id] = item
@@ -502,6 +539,86 @@ class MarkerPanel(QGroupBox):
         max_id = ArUcoGenerator.get_max_id_for_dict(dictionary)
         if aruco_id < max_id:
             self.marker_id_spinbox.setValue(aruco_id + 1)
+    
+    def _update_marker_cad_pose(self, aruco_info: ArUcoMarkerInfo, position: tuple, normal: tuple) -> None:
+        """Update marker with CAD object pose information."""
+        # Get CAD object information from the 3D viewer
+        cad_info = self._get_cad_object_info()
+        
+        if cad_info:
+            # Determine face type based on surface normal
+            face_type = self._determine_face_type(normal)
+            
+            # Update the marker's CAD object pose information
+            aruco_info.update_cad_object_pose(
+                cad_center=cad_info["center"],
+                cad_dimensions=cad_info["dimensions"],
+                surface_normal=normal,
+                face_type=face_type
+            )
+            
+            print(f"📐 Updated marker CAD pose: {aruco_info.get_pose_summary()}")
+        else:
+            print("⚠️  No CAD object information available for pose calculation")
+    
+    def _get_cad_object_info(self) -> Optional[Dict]:
+        """Get CAD object information from the 3D viewer."""
+        # Use stored CAD object information if available
+        return self.get_cad_object_info()
+    
+    def set_cad_object_info(self, cad_info: Dict) -> None:
+        """Set CAD object information for pose calculations."""
+        self.cad_object_info = cad_info
+    
+    def get_cad_object_info(self) -> Optional[Dict]:
+        """Get stored CAD object information."""
+        return getattr(self, 'cad_object_info', None)
+    
+    def _update_marker_pose_info(self, aruco_info: ArUcoMarkerInfo) -> None:
+        """Update the CAD object pose information for a marker after position/rotation changes."""
+        # Get CAD object information
+        cad_info = self.get_cad_object_info()
+        
+        if cad_info:
+            # Get the current surface normal (we'll need to recalculate this)
+            # For now, we'll use the existing surface normal from the pose info
+            current_normal = aruco_info.cad_object_pose.get("surface_normal", (0.0, 0.0, 1.0))
+            current_face_type = aruco_info.cad_object_pose.get("face_type", "unknown")
+            
+            # Update the marker's CAD object pose information
+            aruco_info.update_cad_object_pose(
+                cad_center=cad_info["center"],
+                cad_dimensions=cad_info["dimensions"],
+                surface_normal=current_normal,
+                face_type=current_face_type
+            )
+            
+            print(f"📐 Updated marker CAD pose after movement: {aruco_info.get_pose_summary()}")
+        else:
+            print("⚠️  No CAD object information available for pose update")
+    
+    def _determine_face_type(self, normal: tuple) -> str:
+        """Determine the type of face based on surface normal."""
+        import numpy as np
+        
+        n = np.array(normal)
+        n = n / (np.linalg.norm(n) + 1e-8)
+        
+        # Check for primary axis alignments
+        if np.allclose(n, [0, 0, 1], atol=1e-6):
+            return "top"
+        elif np.allclose(n, [0, 0, -1], atol=1e-6):
+            return "bottom"
+        elif np.allclose(n, [1, 0, 0], atol=1e-6):
+            return "right"
+        elif np.allclose(n, [-1, 0, 0], atol=1e-6):
+            return "left"
+        elif np.allclose(n, [0, 1, 0], atol=1e-6):
+            return "front"
+        elif np.allclose(n, [0, -1, 0], atol=1e-6):
+            return "back"
+        else:
+            return "custom"
     
     def _calculate_rotation_from_normal(self, normal: tuple) -> tuple:
         """Calculate rotation angles to align marker Z-axis with surface normal."""
@@ -665,6 +782,61 @@ class MarkerPanel(QGroupBox):
             self.x_spinbox.blockSignals(False)
             self.y_spinbox.blockSignals(False)
             self.z_spinbox.blockSignals(False)
+            
+            # Update pose information display
+            self.update_pose_information_display(current_item.aruco_info)
+        else:
+            # Clear pose information when no marker is selected
+            self.pose_info_text.clear()
+            self.wireframe_attachment_label.setText("N/A")
+    
+    def update_pose_information_display(self, aruco_info: ArUcoMarkerInfo) -> None:
+        """Update the pose information display with detailed marker information."""
+        try:
+            # Get pose information
+            pose_info = aruco_info.cad_object_pose
+            
+            # Format detailed pose information
+            info_text = f"""MARKER POSE INFORMATION
+========================
+ArUco Marker: {aruco_info.dictionary} ID:{aruco_info.marker_id}
+Size: {aruco_info.size:.3f} m
+Border Width: {aruco_info.border_width*100:.1f}%
+
+ABSOLUTE 6D POSE
+================
+Position (X, Y, Z): ({aruco_info.position[0]:.6f}, {aruco_info.position[1]:.6f}, {aruco_info.position[2]:.6f}) m
+Rotation (RPY): ({aruco_info.rotation[0]:.6f}, {aruco_info.rotation[1]:.6f}, {aruco_info.rotation[2]:.6f}) rad
+Rotation (RPY): ({aruco_info.rotation[0]*180/3.14159:.2f}°, {aruco_info.rotation[1]*180/3.14159:.2f}°, {aruco_info.rotation[2]*180/3.14159:.2f}°)
+
+CAD OBJECT RELATIVE 6D POSE
+===========================
+Face Type: {pose_info['face_type']}
+Surface Normal: ({pose_info['surface_normal'][0]:.3f}, {pose_info['surface_normal'][1]:.3f}, {pose_info['surface_normal'][2]:.3f})
+
+CAD Object Center: ({pose_info['cad_center'][0]:.6f}, {pose_info['cad_center'][1]:.6f}, {pose_info['cad_center'][2]:.6f})
+CAD Dimensions: L={pose_info['cad_dimensions']['length']:.3f}m, W={pose_info['cad_dimensions']['width']:.3f}m, H={pose_info['cad_dimensions']['height']:.3f}m
+
+RELATIVE 6D POSE (to CAD center)
+================================
+Position (X, Y, Z): ({pose_info['relative_position'][0]:.6f}, {pose_info['relative_position'][1]:.6f}, {pose_info['relative_position'][2]:.6f}) m
+Rotation (RPY): ({pose_info['relative_rotation'][0]:.6f}, {pose_info['relative_rotation'][1]:.6f}, {pose_info['relative_rotation'][2]:.6f}) rad
+Rotation (RPY): ({pose_info['relative_rotation'][0]*180/3.14159:.2f}°, {pose_info['relative_rotation'][1]*180/3.14159:.2f}°, {pose_info['relative_rotation'][2]*180/3.14159:.2f}°)
+
+WIREFRAME ATTACHMENT
+===================
+The wireframe mesh will attach at the marker position.
+This provides the reference point for robotics applications."""
+            
+            self.pose_info_text.setPlainText(info_text)
+            
+            # Update wireframe attachment point
+            attachment_point = aruco_info.get_wireframe_attachment_point()
+            self.wireframe_attachment_label.setText(f"({attachment_point[0]:.3f}, {attachment_point[1]:.3f}, {attachment_point[2]:.3f})")
+            
+        except Exception as e:
+            self.pose_info_text.setPlainText(f"Error displaying pose information: {str(e)}")
+            self.wireframe_attachment_label.setText("Error")
     
     def move_marker(self, direction: str) -> None:
         """Move the selected marker in the specified direction."""
@@ -692,10 +864,16 @@ class MarkerPanel(QGroupBox):
         current_item.aruco_info.position = new_position
         current_item.update_text()
         
+        # Update CAD object pose information
+        self._update_marker_pose_info(current_item.aruco_info)
+        
         # Update coordinate spinboxes
         self.x_spinbox.setValue(new_position[0])
         self.y_spinbox.setValue(new_position[1])
         self.z_spinbox.setValue(new_position[2])
+        
+        # Update pose information display
+        self.update_pose_information_display(current_item.aruco_info)
         
         # Emit movement signal
         self.marker_moved.emit(current_item.marker_id, new_position)
@@ -715,6 +893,12 @@ class MarkerPanel(QGroupBox):
             current_item.aruco_info.position = new_position
             current_item.update_text()
             
+            # Update CAD object pose information
+            self._update_marker_pose_info(current_item.aruco_info)
+            
+            # Update pose information display
+            self.update_pose_information_display(current_item.aruco_info)
+            
             # Emit signal to update 3D viewer
             self.marker_position_changed.emit(current_item.marker_id, new_position)
             
@@ -729,6 +913,100 @@ class MarkerPanel(QGroupBox):
     def get_all_markers(self) -> List[Dict[str, Any]]:
         """Get all markers as a list of dictionaries."""
         return [item.get_data() for item in self.markers.values()]
+    
+    def get_markers_for_robotics_export(self) -> List[Dict[str, Any]]:
+        """Get markers formatted for robotics export with 6D pose relative to CAD object center."""
+        robotics_markers = []
+        
+        for item in self.markers.values():
+            aruco_info = item.aruco_info
+            pose_info = aruco_info.cad_object_pose
+            
+            # Create robotics export format
+            robotics_marker = {
+                "aruco_dictionary": aruco_info.dictionary,
+                "aruco_id": aruco_info.marker_id,
+                "size": aruco_info.size,
+                "border_width": aruco_info.border_width,
+                "face_type": pose_info["face_type"],
+                "surface_normal": pose_info["surface_normal"],
+                "pose_relative_to_cad_center": {
+                    "position": {
+                        "x": pose_info["relative_position"][0],
+                        "y": pose_info["relative_position"][1], 
+                        "z": pose_info["relative_position"][2]
+                    },
+                    "rotation": {
+                        "roll": pose_info["relative_rotation"][0],
+                        "pitch": pose_info["relative_rotation"][1],
+                        "yaw": pose_info["relative_rotation"][2]
+                    }
+                },
+                "pose_absolute": {
+                    "position": {
+                        "x": aruco_info.position[0],
+                        "y": aruco_info.position[1],
+                        "z": aruco_info.position[2]
+                    },
+                    "rotation": {
+                        "roll": aruco_info.rotation[0],
+                        "pitch": aruco_info.rotation[1],
+                        "yaw": aruco_info.rotation[2]
+                    }
+                },
+                "cad_object_info": {
+                    "center": pose_info["cad_center"],
+                    "dimensions": pose_info["cad_dimensions"]
+                }
+            }
+            
+            robotics_markers.append(robotics_marker)
+        
+        return robotics_markers
+    
+    def get_export_preview(self) -> str:
+        """Get a preview of the export format."""
+        robotics_markers = self.get_markers_for_robotics_export()
+        
+        if not robotics_markers:
+            return "No markers to export"
+        
+        # Show first marker as example
+        example_marker = robotics_markers[0]
+        
+        preview = f"""EXPORT FORMAT PREVIEW
+====================
+Total markers: {len(robotics_markers)}
+
+Example marker export format:
+{{
+  "aruco_dictionary": "{example_marker['aruco_dictionary']}",
+  "aruco_id": {example_marker['aruco_id']},
+  "size": {example_marker['size']:.3f},
+  "border_width": {example_marker['border_width']:.3f},
+  "face_type": "{example_marker['face_type']}",
+  "pose_relative_to_cad_center": {{
+    "position": {{
+      "x": {example_marker['pose_relative_to_cad_center']['position']['x']:.6f},
+      "y": {example_marker['pose_relative_to_cad_center']['position']['y']:.6f},
+      "z": {example_marker['pose_relative_to_cad_center']['position']['z']:.6f}
+    }},
+    "rotation": {{
+      "roll": {example_marker['pose_relative_to_cad_center']['rotation']['roll']:.6f},
+      "pitch": {example_marker['pose_relative_to_cad_center']['rotation']['pitch']:.6f},
+      "yaw": {example_marker['pose_relative_to_cad_center']['rotation']['yaw']:.6f}
+    }}
+  }}
+}}
+
+This format provides:
+- ArUco dictionary and ID for marker detection
+- Size and border width used to create the ArUco marker
+- 6D pose (x,y,z,roll,pitch,yaw) relative to CAD object center
+- Face type and surface normal for context
+- Both relative and absolute poses for flexibility"""
+        
+        return preview
         
     def load_markers(self, markers_data: List[Dict[str, Any]]) -> None:
         """Load markers from data."""
@@ -898,6 +1176,12 @@ class MarkerPanel(QGroupBox):
         current_item.aruco_info.rotation = new_rotation
         current_item.update_text()
         
+        # Update CAD object pose information
+        self._update_marker_pose_info(current_item.aruco_info)
+        
+        # Update pose information display
+        self.update_pose_information_display(current_item.aruco_info)
+        
         # Emit orientation change signal
         self.marker_orientation_changed.emit(current_item.marker_id, new_rotation)
         
@@ -913,6 +1197,12 @@ class MarkerPanel(QGroupBox):
         default_rotation = (0.0, 0.0, 0.0)
         current_item.aruco_info.rotation = default_rotation
         current_item.update_text()
+        
+        # Update CAD object pose information
+        self._update_marker_pose_info(current_item.aruco_info)
+        
+        # Update pose information display
+        self.update_pose_information_display(current_item.aruco_info)
         
         # Emit orientation change signal
         self.marker_orientation_changed.emit(current_item.marker_id, default_rotation)

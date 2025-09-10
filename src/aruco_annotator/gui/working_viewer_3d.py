@@ -850,6 +850,26 @@ Watertight: {info['is_watertight']}"""
         
         return combined_mesh
     
+    def get_cad_object_info(self) -> Optional[Dict]:
+        """Get CAD object information for pose calculations."""
+        if self.mesh is None or self.mesh_info is None:
+            return None
+        
+        # Calculate CAD object center
+        bbox_min = np.array(self.mesh_info['bbox_min'])
+        bbox_max = np.array(self.mesh_info['bbox_max'])
+        center = (bbox_min + bbox_max) / 2.0
+        
+        return {
+            "center": tuple(center),
+            "dimensions": self.mesh_info.get('dimensions', {
+                'length': 0.0, 'width': 0.0, 'height': 0.0
+            }),
+            "bbox_min": tuple(bbox_min),
+            "bbox_max": tuple(bbox_max),
+            "max_dimension": self.mesh_info.get('max_dimension', 0.0)
+        }
+    
     def create_grid(self) -> o3d.geometry.LineSet:
         """Create a grid for the 3D viewer."""
         try:

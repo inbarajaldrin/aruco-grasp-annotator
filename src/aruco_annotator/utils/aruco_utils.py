@@ -118,13 +118,24 @@ class ArUcoMarkerInfo:
     """Container for ArUco marker information."""
     
     def __init__(self, dictionary: str, marker_id: int, position: Tuple[float, float, float], 
-                 size: float, rotation: Tuple[float, float, float] = (0, 0, 0), border_width: float = 0.1):
+                 size: float, rotation: Tuple[float, float, float] = (0, 0, 0), border_width: float = 0.1,
+                 cad_object_pose: Optional[Dict] = None):
         self.dictionary = dictionary
         self.marker_id = marker_id
         self.position = position
         self.size = size
         self.rotation = rotation  # Euler angles in radians
         self.border_width = border_width  # Border width as percentage (0.0 to 0.5)
+        
+        # CAD object relative pose information
+        self.cad_object_pose = cad_object_pose or {
+            "cad_center": [0.0, 0.0, 0.0],
+            "cad_dimensions": {"length": 0.0, "width": 0.0, "height": 0.0},
+            "relative_position": [0.0, 0.0, 0.0],  # Marker position relative to CAD center
+            "relative_rotation": [0.0, 0.0, 0.0],  # Marker rotation relative to CAD orientation
+            "surface_normal": [0.0, 0.0, 1.0],     # Surface normal at marker location
+            "face_type": "unknown"                 # Type of face (top, bottom, front, back, left, right)
+        }
         
     def to_dict(self) -> Dict:
         """Convert to dictionary for serialization."""
@@ -134,7 +145,8 @@ class ArUcoMarkerInfo:
             "position": list(self.position),
             "size": self.size,
             "rotation": list(self.rotation),
-            "border_width": self.border_width
+            "border_width": self.border_width,
+            "cad_object_pose": self.cad_object_pose
         }
     
     @classmethod
@@ -146,11 +158,52 @@ class ArUcoMarkerInfo:
             position=tuple(data["position"]),
             size=data["size"],
             rotation=tuple(data.get("rotation", (0, 0, 0))),
-            border_width=data.get("border_width", 0.1)
+            border_width=data.get("border_width", 0.1),
+            cad_object_pose=data.get("cad_object_pose", None)
         )
     
     def __str__(self) -> str:
         return f"ArUco {self.dictionary} ID:{self.marker_id} at {self.position}"
+    
+    def update_cad_object_pose(self, cad_center: Tuple[float, float, float], 
+                              cad_dimensions: Dict[str, float], 
+                              surface_normal: Tuple[float, float, float],
+                              face_type: str = "unknown") -> None:
+        """Update CAD object pose information."""
+        import numpy as np
+        
+        # Calculate relative position (marker position relative to CAD center)
+        relative_pos = np.array(self.position) - np.array(cad_center)
+        
+        # Calculate relative rotation (simplified - could be enhanced)
+        relative_rot = list(self.rotation)  # For now, use marker's absolute rotation
+        
+        self.cad_object_pose.update({
+            "cad_center": list(cad_center),
+            "cad_dimensions": cad_dimensions,
+            "relative_position": relative_pos.tolist(),
+            "relative_rotation": relative_rot,
+            "surface_normal": list(surface_normal),
+            "face_type": face_type
+        })
+    
+    def get_wireframe_attachment_point(self) -> Tuple[float, float, float]:
+        """Calculate where the wireframe mesh should attach relative to the marker."""
+        import numpy as np
+        
+        # The wireframe typically attaches at the marker position
+        # This could be enhanced to consider surface normal and offset
+        return tuple(self.position)
+    
+    def get_pose_summary(self) -> str:
+        """Get a human-readable summary of the marker pose."""
+        rel_pos = self.cad_object_pose["relative_position"]
+        rel_rot = self.cad_object_pose["relative_rotation"]
+        face_type = self.cad_object_pose["face_type"]
+        
+        return (f"Face: {face_type}, "
+                f"Rel Pos: ({rel_pos[0]:.3f}, {rel_pos[1]:.3f}, {rel_pos[2]:.3f}), "
+                f"Rel RPY: ({rel_rot[0]:.3f}, {rel_rot[1]:.3f}, {rel_rot[2]:.3f})")
 
 
 def create_aruco_mesh_with_texture(aruco_info: ArUcoMarkerInfo, generator: ArUcoGenerator) -> o3d.geometry.TriangleMesh:

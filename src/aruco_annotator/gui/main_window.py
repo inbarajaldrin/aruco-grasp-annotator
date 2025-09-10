@@ -1,8 +1,10 @@
 """Main window for the ArUco Grasp Annotator application."""
 
 import sys
+import json
 from pathlib import Path
 from typing import Optional
+from datetime import datetime
 
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QAction, QKeySequence, QIcon
@@ -309,6 +311,12 @@ class MainWindow(QMainWindow):
                 # Load mesh into viewer with dimension info
                 self.viewer_3d.load_mesh(mesh, mesh_info)
                 
+                # Pass CAD object information to marker panel for pose calculations
+                cad_info = self.viewer_3d.get_cad_object_info()
+                if cad_info:
+                    self.marker_panel.set_cad_object_info(cad_info)
+                    print(f"📐 CAD object info passed to marker panel: {cad_info}")
+                
                 # Enable export button
                 self.export_button.setEnabled(True)
                 
@@ -392,13 +400,23 @@ All dimensions converted to meters for robotics applications.</i>
         
         if file_path:
             try:
-                # Collect annotations from UI
-                markers = self.marker_panel.get_all_markers()
+                # Collect annotations from UI in robotics format
+                robotics_markers = self.marker_panel.get_markers_for_robotics_export()
                 
-                # Export using annotation manager
-                self.annotation_manager.export_annotations(
-                    Path(file_path), markers, []
-                )
+                # Create export data with robotics format
+                export_data = {
+                    "export_type": "robotics_aruco_poses",
+                    "version": "2.0",
+                    "exported_at": datetime.now().isoformat(),
+                    "model_file": str(self.current_file) if self.current_file else None,
+                    "total_markers": len(robotics_markers),
+                    "markers": robotics_markers,
+                    "description": "ArUco marker poses relative to CAD object center for robotics applications"
+                }
+                
+                # Write to file
+                with open(file_path, 'w') as f:
+                    json.dump(export_data, f, indent=2)
                 
                 self.status_bar.showMessage(f"Annotations exported to: {Path(file_path).name}")
                 QMessageBox.information(
