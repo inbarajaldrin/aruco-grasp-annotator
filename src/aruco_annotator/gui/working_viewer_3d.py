@@ -790,10 +790,9 @@ Watertight: {info['is_watertight']}"""
                 pixel_intensity = marker_image[img_y, img_x]
                 
                 # Create a small flat cube for this pixel
-                # Note: We need to flip the Y coordinate to match image orientation
                 # Position pixels within the pattern area (excluding border)
                 pixel_x = x + pattern_size/2 - (i + 0.5) * pixel_size
-                pixel_y = y - pattern_size/2 + (j + 0.5) * pixel_size  # Flip Y to match image
+                pixel_y = y + pattern_size/2 - (j + 0.5) * pixel_size 
                 pixel_z = z - size/200  # Very thin, just above the base
                 
                 pixel_cube = o3d.geometry.TriangleMesh.create_box(

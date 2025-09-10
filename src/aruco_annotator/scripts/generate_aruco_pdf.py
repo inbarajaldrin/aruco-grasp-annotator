@@ -56,7 +56,7 @@ class ArUcoPDFGenerator:
         self.aruco_generator = ArUcoGenerator()
         
         # Calculate marker dimensions - use exact size specified
-        self.marker_size_pixels = int(marker_size_mm * 4)  # 4 pixels per mm for good quality
+        self.marker_size_pixels = int(marker_size_mm * 12)  # 12 pixels per mm for high accuracy (304.8 DPI)
         self.border_width_mm = marker_size_mm * (border_width_percent / 100)
         self.pattern_size_mm = marker_size_mm - 2 * self.border_width_mm
         
@@ -78,7 +78,7 @@ class ArUcoPDFGenerator:
         bordered_image = np.ones((total_size, total_size), dtype=np.uint8) * 255  # White background
         
         # Calculate pattern area (center the pattern)
-        border_pixels = int(self.border_width_mm * 4)  # 4 pixels per mm
+        border_pixels = int(self.border_width_mm * 12)  # 12 pixels per mm
         pattern_size = total_size - 2 * border_pixels
         
         # Resize the marker to fit the pattern area
@@ -176,7 +176,7 @@ class ArUcoPDFGenerator:
             
             # Add black border if requested
             if add_black_border:
-                border_pixels = int(black_border_mm * 4)  # 4 pixels per mm
+                border_pixels = int(black_border_mm * 12)  # 12 pixels per mm
                 bordered_size = self.marker_size_pixels + 2 * border_pixels
                 
                 # Create image with black border
