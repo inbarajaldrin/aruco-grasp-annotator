@@ -23,10 +23,11 @@ import csv
 class WireframeExporter:
     """Export wireframe data from 3D meshes in various formats."""
     
-    def __init__(self):
+    def __init__(self, unit_conversion=1.0):
         self.vertices = None
         self.edges = None
         self.mesh_info = None
+        self.unit_conversion = unit_conversion  # Factor to convert to meters (e.g., 0.01 for cm->m)
     
     def load_mesh(self, file_path: str) -> bool:
         """Load a 3D mesh from file."""
@@ -36,11 +37,20 @@ class WireframeExporter:
                 print(f"ERROR: No vertices found in {file_path}")
                 return False
             
-            self.vertices = np.asarray(mesh.vertices)
+            # Apply unit conversion to vertices (convert to meters)
+            original_vertices = np.asarray(mesh.vertices)
+            self.vertices = original_vertices * self.unit_conversion
             self.edges = self._extract_wireframe_edges(mesh)
             self.mesh_info = self._compute_mesh_info(mesh)
             
             print(f"✅ Loaded mesh: {len(self.vertices)} vertices, {len(self.edges)} edges")
+            if self.unit_conversion != 1.0:
+                print(f"📏 Applied unit conversion: {self.unit_conversion} (converting to meters)")
+                # Show example of conversion
+                if len(original_vertices) > 0:
+                    orig_example = original_vertices[0]
+                    conv_example = self.vertices[0]
+                    print(f"   Example: {orig_example} → {conv_example}")
             return True
             
         except Exception as e:
@@ -223,6 +233,8 @@ Examples:
   python export_wireframe.py model.ply --format numpy --output wireframe.npy
   python export_wireframe.py model.stl --format ply --output wireframe.ply
   python export_wireframe.py model.obj --format obj --output wireframe.obj
+  python export_wireframe.py model.stl --unit-conversion 0.01  # Convert cm to m
+  python export_wireframe.py model.obj --unit-conversion 0.001 # Convert mm to m
         """
     )
     
@@ -235,6 +247,8 @@ Examples:
                        help='Output file path (default: auto-generated)')
     parser.add_argument('--info', '-i', action='store_true',
                        help='Show mesh information only')
+    parser.add_argument('--unit-conversion', '-u', type=float, default=0.01,
+                       help='Unit conversion factor to convert to meters (default: 0.01 for cm->m)')
     
     args = parser.parse_args()
     
@@ -245,7 +259,7 @@ Examples:
         return 1
     
     # Create exporter and load mesh
-    exporter = WireframeExporter()
+    exporter = WireframeExporter(unit_conversion=args.unit_conversion)
     if not exporter.load_mesh(args.input_file):
         return 1
     
