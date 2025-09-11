@@ -41,7 +41,9 @@ def transform_mesh_to_camera_frame(vertices, marker_pose, aruco_annotation):
         marker_relative_pose['position']['y'], 
         marker_relative_pose['position']['z']
     ])
-    marker_pos = coord_transform @ original_pos
+    # TODO: Investigate why 1.25x scaling is needed for proper wireframe alignment
+    # Apply the same scaling factor to marker position to maintain alignment
+    marker_pos = coord_transform @ (original_pos * 1.25)
     
     # Convert marker rotation from Euler angles to rotation matrix
     marker_rot = marker_relative_pose['rotation']
@@ -225,7 +227,8 @@ def detect_aruco_with_mesh_overlay():
                     detected_targets.append((i, marker_id))
             
             if detected_targets:
-                # Process each detected target marker
+                # First pass: collect all successful pose estimations
+                successful_detections = []
                 for target_idx, marker_id in detected_targets:
                     target_corners = corners[target_idx]
                     marker_annotation = marker_annotations[marker_id]
@@ -246,38 +249,71 @@ def detect_aruco_with_mesh_overlay():
                     success, rvec, tvec = cv2.solvePnP(object_points, target_corners[0], camera_matrix, dist_coeffs)
                     
                     if success:
-                        # Draw coordinate axes
-                        cv2.drawFrameAxes(frame, camera_matrix, dist_coeffs, rvec, tvec, marker_size)
-                        
-                        # Overlay mesh if enabled
-                        if show_mesh:
-                            # Transform mesh vertices to camera frame using ArUco annotation data
-                            transformed_vertices = transform_mesh_to_camera_frame(vertices, (tvec, rvec), marker_annotation)
-                            
-                            # Project vertices to image coordinates
-                            projected_vertices = project_vertices_to_image(transformed_vertices, camera_matrix, dist_coeffs)
-                            
-                            # Draw wireframe
-                            if len(projected_vertices) > 0:
-                                draw_wireframe(frame, projected_vertices, edges, color=(0, 255, 0), thickness=2)
-                        
-                        # Display information for this marker
                         position = tvec.flatten()
                         distance = np.linalg.norm(position)
-                        face_type = marker_annotation['face_type']
+                        successful_detections.append({
+                            'target_idx': target_idx,
+                            'marker_id': marker_id,
+                            'marker_annotation': marker_annotation,
+                            'target_corners': target_corners,
+                            'marker_size': marker_size,
+                            'rvec': rvec,
+                            'tvec': tvec,
+                            'position': position,
+                            'distance': distance
+                        })
+                
+                # Find the most confident marker (closest to camera)
+                best_marker = None
+                if successful_detections:
+                    best_marker = min(successful_detections, key=lambda x: x['distance'])
+                
+                # Process all detected markers for display, but only show wireframe for the best one
+                for i, detection in enumerate(successful_detections):
+                    target_idx = detection['target_idx']
+                    marker_id = detection['marker_id']
+                    marker_annotation = detection['marker_annotation']
+                    target_corners = detection['target_corners']
+                    marker_size = detection['marker_size']
+                    rvec = detection['rvec']
+                    tvec = detection['tvec']
+                    position = detection['position']
+                    distance = detection['distance']
+                    face_type = marker_annotation['face_type']
+                    
+                    # Draw coordinate axes for all markers
+                    cv2.drawFrameAxes(frame, camera_matrix, dist_coeffs, rvec, tvec, marker_size)
+                    
+                    # Only show wireframe for the most confident (closest) marker
+                    is_best_marker = (detection == best_marker)
+                    if show_mesh and is_best_marker:
+                        # Transform mesh vertices to camera frame using ArUco annotation data
+                        transformed_vertices = transform_mesh_to_camera_frame(vertices, (tvec, rvec), marker_annotation)
                         
-                        # Position text based on marker index to avoid overlap
-                        y_offset = 30 + (len(detected_targets) - 1 - detected_targets.index((target_idx, marker_id))) * 120
+                        # Project vertices to image coordinates
+                        projected_vertices = project_vertices_to_image(transformed_vertices, camera_matrix, dist_coeffs)
                         
-                        cv2.putText(frame, f"Marker ID: {marker_id} ({face_type})", (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-                        cv2.putText(frame, f"Position: ({position[0]:.3f}, {position[1]:.3f}, {position[2]:.3f})", 
-                                   (10, y_offset + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-                        cv2.putText(frame, f"Distance: {distance:.3f}m", (10, y_offset + 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-                        
-                        # Print to console for the first detected marker
-                        if target_idx == detected_targets[0][0]:
-                            print(f"\rMarker {marker_id} ({face_type}): x={position[0]:.3f}, y={position[1]:.3f}, z={position[2]:.3f} | "
-                                  f"Distance: {distance:.3f}m | Mesh: {'ON' if show_mesh else 'OFF'}", end="", flush=True)
+                        # Draw wireframe
+                        if len(projected_vertices) > 0:
+                            draw_wireframe(frame, projected_vertices, edges, color=(0, 255, 0), thickness=2)
+                    
+                    # Display information for this marker
+                    # Position text based on marker index to avoid overlap
+                    y_offset = 30 + i * 120
+                    
+                    # Use different colors for best vs other markers
+                    text_color = (0, 255, 0) if is_best_marker else (0, 255, 255)
+                    marker_status = " (BEST)" if is_best_marker else ""
+                    
+                    cv2.putText(frame, f"Marker ID: {marker_id} ({face_type}){marker_status}", (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.8, text_color, 2)
+                    cv2.putText(frame, f"Position: ({position[0]:.3f}, {position[1]:.3f}, {position[2]:.3f})", 
+                               (10, y_offset + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, text_color, 2)
+                    cv2.putText(frame, f"Distance: {distance:.3f}m", (10, y_offset + 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, text_color, 2)
+                    
+                    # Print to console for the best marker
+                    if is_best_marker:
+                        print(f"\rBest Marker {marker_id} ({face_type}): x={position[0]:.3f}, y={position[1]:.3f}, z={position[2]:.3f} | "
+                              f"Distance: {distance:.3f}m | Mesh: {'ON' if show_mesh else 'OFF'}", end="", flush=True)
                 
                 # Display mesh status
                 cv2.putText(frame, f"Mesh: {'ON' if show_mesh else 'OFF'}", (10, frame.shape[0] - 50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
