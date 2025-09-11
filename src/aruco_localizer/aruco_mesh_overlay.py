@@ -1,0 +1,307 @@
+import cv2
+import cv2.aruco as aruco
+import numpy as np
+import json
+
+def load_wireframe_data(json_file):
+    """Load wireframe data from JSON file"""
+    with open(json_file, 'r') as f:
+        data = json.load(f)
+    return data['vertices'], data['edges']
+
+def load_aruco_annotations(json_file):
+    """Load ArUco marker annotations from JSON file"""
+    with open(json_file, 'r') as f:
+        data = json.load(f)
+    return data['markers']
+
+def transform_mesh_to_camera_frame(vertices, marker_pose, aruco_annotation):
+    """Transform mesh vertices from CAD frame to camera frame using ArUco annotation data"""
+    # Get marker position and rotation
+    tvec, rvec = marker_pose
+    
+    # Convert rotation vector to rotation matrix
+    rotation_matrix, _ = cv2.Rodrigues(rvec)
+    
+    # Get the marker's pose relative to CAD center from annotation
+    marker_relative_pose = aruco_annotation['pose_relative_to_cad_center']
+    
+    # Coordinate system transformation matrix
+    # The ArUco annotator exports data in 3D graphics coordinate system
+    # OpenCV uses a different coordinate system for camera operations
+    # This matrix transforms from 3D graphics to OpenCV convention
+    coord_transform = np.array([
+        [-1,  0,  0],  # X-axis: flip (3D graphics X-right → OpenCV X-left)
+        [0,   1,  0],  # Y-axis: unchanged (both systems use Y-up)
+        [0,   0, -1]   # Z-axis: flip (3D graphics Z-forward → OpenCV Z-backward)
+    ])
+    # Apply transformation to marker position
+    original_pos = np.array([
+        marker_relative_pose['position']['x'],
+        marker_relative_pose['position']['y'], 
+        marker_relative_pose['position']['z']
+    ])
+    marker_pos = coord_transform @ original_pos
+    
+    # Convert marker rotation from Euler angles to rotation matrix
+    marker_rot = marker_relative_pose['rotation']
+    marker_rotation_matrix = euler_to_rotation_matrix(
+        marker_rot['roll'], marker_rot['pitch'], marker_rot['yaw']
+    )
+    
+    # Apply coordinate system transformation to the rotation matrix as well
+    marker_rotation_matrix = coord_transform @ marker_rotation_matrix @ coord_transform.T
+    
+    # Transform vertices from CAD frame to camera frame
+    transformed_vertices = []
+    for vertex in vertices:
+        # Apply coordinate system transformation to the vertex first
+        vertex_transformed = coord_transform @ np.array(vertex)
+        
+        # Then transform from CAD frame to marker frame
+        vertex_marker = marker_rotation_matrix.T @ (vertex_transformed - marker_pos)
+        
+        # Finally, transform from marker frame to camera frame
+        vertex_cam = rotation_matrix @ vertex_marker + tvec.flatten()
+        transformed_vertices.append(vertex_cam)
+    
+    return np.array(transformed_vertices)
+
+def euler_to_rotation_matrix(roll, pitch, yaw):
+    """Convert Euler angles (roll, pitch, yaw) to rotation matrix"""
+    # Convert to radians if needed (assuming they're already in radians from JSON)
+    r, p, y = roll, pitch, yaw
+    
+    # Create rotation matrices for each axis
+    Rx = np.array([[1, 0, 0],
+                   [0, np.cos(r), -np.sin(r)],
+                   [0, np.sin(r), np.cos(r)]])
+    
+    Ry = np.array([[np.cos(p), 0, np.sin(p)],
+                   [0, 1, 0],
+                   [-np.sin(p), 0, np.cos(p)]])
+    
+    Rz = np.array([[np.cos(y), -np.sin(y), 0],
+                   [np.sin(y), np.cos(y), 0],
+                   [0, 0, 1]])
+    
+    # Combine rotations (order: Rz * Ry * Rx)
+    return Rz @ Ry @ Rx
+
+def project_vertices_to_image(vertices, camera_matrix, dist_coeffs):
+    """Project 3D vertices to 2D image coordinates"""
+    if len(vertices) == 0:
+        return np.array([])
+    
+    # Project points to image plane
+    projected_points, _ = cv2.projectPoints(
+        vertices.astype(np.float32), 
+        np.zeros((3, 1)),  # No rotation (already in camera frame)
+        np.zeros((3, 1)),  # No translation (already in camera frame)
+        camera_matrix, 
+        dist_coeffs
+    )
+    
+    return projected_points.reshape(-1, 2).astype(np.int32)
+
+def draw_wireframe(frame, projected_vertices, edges, color=(0, 255, 0), thickness=2):
+    """Draw wireframe on the image"""
+    if len(projected_vertices) == 0:
+        return
+    
+    # Filter out vertices that are outside the image bounds
+    height, width = frame.shape[:2]
+    valid_vertices = []
+    valid_indices = []
+    
+    for i, vertex in enumerate(projected_vertices):
+        x, y = vertex
+        if 0 <= x < width and 0 <= y < height:
+            valid_vertices.append(vertex)
+            valid_indices.append(i)
+    
+    if len(valid_vertices) == 0:
+        return
+    
+    # Create mapping from original indices to valid indices
+    index_map = {orig_idx: new_idx for new_idx, orig_idx in enumerate(valid_indices)}
+    
+    # Draw edges
+    for edge in edges:
+        if len(edge) >= 2:
+            start_idx, end_idx = edge[0], edge[1]
+            if start_idx in index_map and end_idx in index_map:
+                start_point = tuple(valid_vertices[index_map[start_idx]])
+                end_point = tuple(valid_vertices[index_map[end_idx]])
+                cv2.line(frame, start_point, end_point, color, thickness)
+    
+    # Draw vertices as small circles
+    for vertex in valid_vertices:
+        cv2.circle(frame, tuple(vertex), 3, (255, 0, 0), -1)
+
+def detect_aruco_with_mesh_overlay():
+    """Detect ArUco marker and overlay mesh wireframe"""
+    
+    # Load wireframe data
+    json_file = "fork_orange_scaled70_ v2_wireframe.json"
+    try:
+        vertices, edges = load_wireframe_data(json_file)
+        print(f"Loaded wireframe: {len(vertices)} vertices, {len(edges)} edges")
+    except Exception as e:
+        print(f"Error loading wireframe data: {e}")
+        return
+    
+    # Load ArUco annotations
+    aruco_annotations_file = "fork_orange_scaled70_ v2_aruco_annotations.json"
+    try:
+        aruco_annotations = load_aruco_annotations(aruco_annotations_file)
+        print(f"Loaded {len(aruco_annotations)} ArUco annotations")
+    except Exception as e:
+        print(f"Error loading ArUco annotations: {e}")
+        return
+    
+    # Create a dictionary mapping marker IDs to their annotations
+    marker_annotations = {}
+    for annotation in aruco_annotations:
+        marker_id = annotation['aruco_id']
+        marker_annotations[marker_id] = annotation
+        print(f"Loaded annotation for marker ID {marker_id}: size={annotation['size']}m, border={annotation['border_width']}m, face={annotation['face_type']}")
+    
+    print(f"Total markers available: {len(marker_annotations)}")
+    
+    # Camera parameters
+    camera_matrix = np.array([[800, 0, 320],
+                              [0, 800, 240],
+                              [0, 0, 1]], dtype=np.float32)
+    dist_coeffs = np.zeros((5, 1), dtype=np.float32)
+    
+    # ArUco parameters - we'll calculate marker sizes dynamically for each detected marker
+    target_ids = list(marker_annotations.keys())  # All available marker IDs
+    
+    print(f"Looking for markers: {target_ids}")
+    dictionary = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
+    parameters = aruco.DetectorParameters()
+    detector = aruco.ArucoDetector(dictionary, parameters)
+    
+    # Open camera
+    cap = cv2.VideoCapture(8)  # Using camera ID 8
+    if not cap.isOpened():
+        print("Failed to open camera 8")
+        return
+    
+    # Set camera properties
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    
+    print("ArUco Mesh Overlay Started")
+    print(f"Looking for markers {target_ids} with mesh overlay")
+    print("Press 'q' to quit, 's' to toggle mesh display")
+    print("=" * 50)
+    
+    show_mesh = True
+    
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            print("Failed to read from camera")
+            break
+        
+        # Convert to grayscale
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        
+        # Detect markers
+        corners, ids, _ = detector.detectMarkers(gray)
+        
+        # Draw all detected markers
+        if ids is not None:
+            aruco.drawDetectedMarkers(frame, corners, ids)
+            
+            # Check for any of our target markers
+            detected_targets = []
+            for i, marker_id in enumerate(ids.flatten()):
+                if marker_id in target_ids:
+                    detected_targets.append((i, marker_id))
+            
+            if detected_targets:
+                # Process each detected target marker
+                for target_idx, marker_id in detected_targets:
+                    target_corners = corners[target_idx]
+                    marker_annotation = marker_annotations[marker_id]
+                    
+                    # Calculate marker size including border
+                    base_marker_size = marker_annotation['size']
+                    border_percentage = marker_annotation['border_width']
+                    marker_size = base_marker_size * (1 + border_percentage)
+                    
+                    # Estimate pose
+                    object_points = np.array([
+                        [-marker_size/2,  marker_size/2, 0],
+                        [ marker_size/2,  marker_size/2, 0],
+                        [ marker_size/2, -marker_size/2, 0],
+                        [-marker_size/2, -marker_size/2, 0]
+                    ], dtype=np.float32)
+                    
+                    success, rvec, tvec = cv2.solvePnP(object_points, target_corners[0], camera_matrix, dist_coeffs)
+                    
+                    if success:
+                        # Draw coordinate axes
+                        cv2.drawFrameAxes(frame, camera_matrix, dist_coeffs, rvec, tvec, marker_size)
+                        
+                        # Overlay mesh if enabled
+                        if show_mesh:
+                            # Transform mesh vertices to camera frame using ArUco annotation data
+                            transformed_vertices = transform_mesh_to_camera_frame(vertices, (tvec, rvec), marker_annotation)
+                            
+                            # Project vertices to image coordinates
+                            projected_vertices = project_vertices_to_image(transformed_vertices, camera_matrix, dist_coeffs)
+                            
+                            # Draw wireframe
+                            if len(projected_vertices) > 0:
+                                draw_wireframe(frame, projected_vertices, edges, color=(0, 255, 0), thickness=2)
+                        
+                        # Display information for this marker
+                        position = tvec.flatten()
+                        distance = np.linalg.norm(position)
+                        face_type = marker_annotation['face_type']
+                        
+                        # Position text based on marker index to avoid overlap
+                        y_offset = 30 + (len(detected_targets) - 1 - detected_targets.index((target_idx, marker_id))) * 120
+                        
+                        cv2.putText(frame, f"Marker ID: {marker_id} ({face_type})", (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                        cv2.putText(frame, f"Position: ({position[0]:.3f}, {position[1]:.3f}, {position[2]:.3f})", 
+                                   (10, y_offset + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                        cv2.putText(frame, f"Distance: {distance:.3f}m", (10, y_offset + 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                        
+                        # Print to console for the first detected marker
+                        if target_idx == detected_targets[0][0]:
+                            print(f"\rMarker {marker_id} ({face_type}): x={position[0]:.3f}, y={position[1]:.3f}, z={position[2]:.3f} | "
+                                  f"Distance: {distance:.3f}m | Mesh: {'ON' if show_mesh else 'OFF'}", end="", flush=True)
+                
+                # Display mesh status
+                cv2.putText(frame, f"Mesh: {'ON' if show_mesh else 'OFF'}", (10, frame.shape[0] - 50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+            else:
+                cv2.putText(frame, f"Looking for markers {target_ids}...", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
+        else:
+            cv2.putText(frame, "No markers detected", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
+        
+        # Show controls
+        cv2.putText(frame, "Press 'q' to quit, 's' to toggle mesh", (10, frame.shape[0] - 20), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        
+        # Show frame
+        cv2.imshow("ArUco Mesh Overlay", frame)
+        
+        # Check for key presses
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('q'):
+            break
+        elif key == ord('s'):
+            show_mesh = not show_mesh
+            print(f"\nMesh display: {'ON' if show_mesh else 'OFF'}")
+    
+    cap.release()
+    cv2.destroyAllWindows()
+    print("\nArUco mesh overlay stopped.")
+
+if __name__ == "__main__":
+    detect_aruco_with_mesh_overlay()
