@@ -149,3 +149,4 @@ models/
 *.stp
 *.json
 !example_annotations.json
+!src/wireframe_exporter/examples/*.json
