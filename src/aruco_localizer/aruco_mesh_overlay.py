@@ -55,8 +55,10 @@ def transform_mesh_to_camera_frame(vertices, marker_pose, aruco_annotation):
     # Transform vertices from CAD frame to camera frame
     transformed_vertices = []
     for vertex in vertices:
+        # TODO: Investigate why 1.25x scaling is needed for proper wireframe alignment
+        # This compensates for an unknown scaling discrepancy in the coordinate system
         # Apply coordinate system transformation to the vertex first
-        vertex_transformed = coord_transform @ np.array(vertex)
+        vertex_transformed = coord_transform @ (np.array(vertex) * 1.25)
         
         # Then transform from CAD frame to marker frame
         vertex_marker = marker_rotation_matrix.T @ (vertex_transformed - marker_pos)
