@@ -1,13 +1,13 @@
 {
   "export_type": "robotics_aruco_poses",
   "version": "2.0",
-  "exported_at": "2025-09-10T16:49:18.577666",
-  "model_file": "/home/aaugus11/Projects/aruco-grasp-annotator/src/wireframe_exporter/examples/fork_orange_scaled70_ v2.obj",
+  "exported_at": "2025-09-11T23:03:03.606981",
+  "model_file": "/Users/aldrininbaraj/Documents/Projects/aruco annotate/data/models/line_red_scaled70.obj",
   "total_markers": 6,
   "markers": [
     {
       "aruco_dictionary": "DICT_4X4_50",
-      "aruco_id": 0,
+      "aruco_id": 12,
       "size": 0.021,
       "border_width": 0.05,
       "face_type": "right",
@@ -18,7 +18,7 @@
       ],
       "pose_relative_to_cad_center": {
         "position": {
-          "x": -0.05460000038146973,
+          "x": -0.012949999570846558,
           "y": 0.0,
           "z": 0.0
         },
@@ -30,7 +30,7 @@
       },
       "pose_absolute": {
         "position": {
-          "x": -0.05460000038146973,
+          "x": -0.012949999570846558,
           "y": 0.0,
           "z": 0.0
         },
@@ -47,15 +47,15 @@
           0.0
         ],
         "dimensions": {
-          "length": 0.10920000076293945,
-          "width": 0.07000000000000006,
-          "height": 0.020999999046325685
+          "length": 0.025899999141693116,
+          "width": 0.14,
+          "height": 0.025899999141693116
         }
       }
     },
     {
       "aruco_dictionary": "DICT_4X4_50",
-      "aruco_id": 1,
+      "aruco_id": 13,
       "size": 0.021,
       "border_width": 0.05,
       "face_type": "left",
@@ -66,7 +66,7 @@
       ],
       "pose_relative_to_cad_center": {
         "position": {
-          "x": 0.05460000038146973,
+          "x": 0.012949999570846558,
           "y": 0.0,
           "z": 0.0
         },
@@ -78,7 +78,7 @@
       },
       "pose_absolute": {
         "position": {
-          "x": 0.05460000038146973,
+          "x": 0.012949999570846558,
           "y": 0.0,
           "z": 0.0
         },
@@ -95,15 +95,15 @@
           0.0
         ],
         "dimensions": {
-          "length": 0.10920000076293945,
-          "width": 0.07000000000000006,
-          "height": 0.020999999046325685
+          "length": 0.025899999141693116,
+          "width": 0.14,
+          "height": 0.025899999141693116
         }
       }
     },
     {
       "aruco_dictionary": "DICT_4X4_50",
-      "aruco_id": 2,
+      "aruco_id": 14,
       "size": 0.021,
       "border_width": 0.05,
       "face_type": "front",
@@ -115,7 +115,7 @@
       "pose_relative_to_cad_center": {
         "position": {
           "x": 0.0,
-          "y": -0.03500000000000003,
+          "y": -0.07,
           "z": 0.0
         },
         "rotation": {
@@ -127,7 +127,7 @@
       "pose_absolute": {
         "position": {
           "x": 0.0,
-          "y": -0.03500000000000003,
+          "y": -0.07,
           "z": 0.0
         },
         "rotation": {
@@ -143,15 +143,15 @@
           0.0
         ],
         "dimensions": {
-          "length": 0.10920000076293945,
-          "width": 0.07000000000000006,
-          "height": 0.020999999046325685
+          "length": 0.025899999141693116,
+          "width": 0.14,
+          "height": 0.025899999141693116
         }
       }
     },
     {
       "aruco_dictionary": "DICT_4X4_50",
-      "aruco_id": 3,
+      "aruco_id": 15,
       "size": 0.021,
       "border_width": 0.05,
       "face_type": "back",
@@ -163,7 +163,7 @@
       "pose_relative_to_cad_center": {
         "position": {
           "x": 0.0,
-          "y": 0.03500000000000003,
+          "y": 0.07,
           "z": 0.0
         },
         "rotation": {
@@ -175,7 +175,7 @@
       "pose_absolute": {
         "position": {
           "x": 0.0,
-          "y": 0.03500000000000003,
+          "y": 0.07,
           "z": 0.0
         },
         "rotation": {
@@ -191,15 +191,15 @@
           0.0
         ],
         "dimensions": {
-          "length": 0.10920000076293945,
-          "width": 0.07000000000000006,
-          "height": 0.020999999046325685
+          "length": 0.025899999141693116,
+          "width": 0.14,
+          "height": 0.025899999141693116
         }
       }
     },
     {
       "aruco_dictionary": "DICT_4X4_50",
-      "aruco_id": 4,
+      "aruco_id": 16,
       "size": 0.021,
       "border_width": 0.05,
       "face_type": "top",
@@ -212,7 +212,7 @@
         "position": {
           "x": 0.0,
           "y": 0.0,
-          "z": -0.010499999523162842
+          "z": -0.012949999570846558
         },
         "rotation": {
           "roll": 0.0,
@@ -224,7 +224,7 @@
         "position": {
           "x": 0.0,
           "y": 0.0,
-          "z": -0.010499999523162842
+          "z": -0.012949999570846558
         },
         "rotation": {
           "roll": 0.0,
@@ -239,15 +239,15 @@
           0.0
         ],
         "dimensions": {
-          "length": 0.10920000076293945,
-          "width": 0.07000000000000006,
-          "height": 0.020999999046325685
+          "length": 0.025899999141693116,
+          "width": 0.14,
+          "height": 0.025899999141693116
         }
       }
     },
     {
       "aruco_dictionary": "DICT_4X4_50",
-      "aruco_id": 5,
+      "aruco_id": 17,
       "size": 0.021,
       "border_width": 0.05,
       "face_type": "bottom",
@@ -260,7 +260,7 @@
         "position": {
           "x": 0.0,
           "y": 0.0,
-          "z": 0.010499999523162842
+          "z": 0.012949999570846558
         },
         "rotation": {
           "roll": 3.141592653589793,
@@ -272,7 +272,7 @@
         "position": {
           "x": 0.0,
           "y": 0.0,
-          "z": 0.010499999523162842
+          "z": 0.012949999570846558
         },
         "rotation": {
           "roll": 3.141592653589793,
@@ -287,9 +287,9 @@
           0.0
         ],
         "dimensions": {
-          "length": 0.10920000076293945,
-          "width": 0.07000000000000006,
-          "height": 0.020999999046325685
+          "length": 0.025899999141693116,
+          "width": 0.14,
+          "height": 0.025899999141693116
         }
       }
     }

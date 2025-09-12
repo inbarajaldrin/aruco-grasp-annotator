@@ -36,6 +36,92 @@ from plot_wireframe_example import plot_wireframe_json
 from utils.aruco_utils import ArUcoGenerator, ArUcoMarkerInfo
 
 
+class BatchExportThread(QThread):
+    """Thread for batch wireframe export operations."""
+    
+    progress = pyqtSignal(int)
+    file_progress = pyqtSignal(str, int, int)  # filename, current, total
+    finished = pyqtSignal(str, bool)  # message, success
+    error = pyqtSignal(str)
+    
+    def __init__(self, source_folder: str, output_folder: str, output_format: str = "json"):
+        super().__init__()
+        self.source_folder = source_folder
+        self.output_folder = output_folder
+        self.output_format = output_format
+    
+    def run(self):
+        try:
+            self.progress.emit(10)
+            
+            # Get all OBJ files from source folder
+            source_path = Path(self.source_folder)
+            obj_files = list(source_path.glob("*.obj"))
+            
+            if not obj_files:
+                self.error.emit("No OBJ files found in source folder")
+                return
+            
+            # Create output folder if it doesn't exist
+            output_path = Path(self.output_folder)
+            output_path.mkdir(parents=True, exist_ok=True)
+            
+            self.progress.emit(20)
+            
+            # Process each file
+            success_count = 0
+            total_files = len(obj_files)
+            
+            for i, obj_file in enumerate(obj_files):
+                try:
+                    # Create output filename: {model_name}_wireframe.{format}
+                    output_filename = f"{obj_file.stem}_wireframe.{self.output_format}"
+                    output_file = output_path / output_filename
+                    
+                    self.file_progress.emit(obj_file.name, i + 1, total_files)
+                    
+                    # Create exporter with unit conversion (cm to m)
+                    exporter = WireframeExporter(unit_conversion=0.01)
+                    
+                    # Load mesh
+                    exporter.load_mesh(str(obj_file))
+                    
+                    # Export wireframe based on format
+                    if self.output_format == 'json':
+                        success = exporter.export_json(str(output_file))
+                    elif self.output_format == 'csv':
+                        success = exporter.export_csv(str(output_file))
+                    elif self.output_format == 'numpy':
+                        success = exporter.export_numpy(str(output_file))
+                    elif self.output_format == 'ply':
+                        success = exporter.export_ply(str(output_file))
+                    elif self.output_format == 'obj':
+                        success = exporter.export_obj(str(output_file))
+                    else:
+                        raise ValueError(f"Unsupported format: {self.output_format}")
+                    
+                    if success:
+                        success_count += 1
+                    
+                    # Update progress
+                    progress_value = 20 + int((i + 1) / total_files * 70)
+                    self.progress.emit(progress_value)
+                    
+                except Exception as e:
+                    print(f"Error processing {obj_file.name}: {str(e)}")
+                    continue
+            
+            self.progress.emit(100)
+            
+            if success_count == total_files:
+                self.finished.emit(f"Successfully exported {success_count}/{total_files} wireframe files to {self.output_folder}", True)
+            else:
+                self.finished.emit(f"Exported {success_count}/{total_files} wireframe files to {self.output_folder} (some files failed)", True)
+                
+        except Exception as e:
+            self.error.emit(f"Batch export error: {str(e)}")
+
+
 class WireframeExportThread(QThread):
     """Thread for wireframe export operations."""
     
@@ -269,6 +355,10 @@ class WireframeExporterMainWindow(QMainWindow):
         # Combined Viewer tab
         self.combined_tab = self.create_combined_viewer_tab()
         self.tab_widget.addTab(self.combined_tab, "Combined Viewer")
+        
+        # Batch Processing tab
+        self.batch_tab = self.create_batch_processing_tab()
+        self.tab_widget.addTab(self.batch_tab, "Batch Processing")
         
         # Status bar
         self.statusBar().showMessage("Ready")
@@ -1120,6 +1210,220 @@ Marker {i+1}:
         layout.addStretch()
         tab.setLayout(layout)
         return tab
+    
+    def create_batch_processing_tab(self):
+        """Create the batch processing tab."""
+        tab = QWidget()
+        layout = QVBoxLayout()
+        
+        # Source folder selection
+        source_group = QGroupBox("Source Folder")
+        source_layout = QGridLayout()
+        
+        self.batch_source_edit = QLineEdit()
+        self.batch_source_edit.setPlaceholderText("Select folder containing OBJ files...")
+        self.batch_source_edit.setReadOnly(True)
+        
+        self.batch_source_browse_btn = QPushButton("Browse...")
+        self.batch_source_browse_btn.clicked.connect(self.browse_batch_source_folder)
+        
+        source_layout.addWidget(QLabel("Source Folder:"), 0, 0)
+        source_layout.addWidget(self.batch_source_edit, 0, 1)
+        source_layout.addWidget(self.batch_source_browse_btn, 0, 2)
+        
+        source_group.setLayout(source_layout)
+        layout.addWidget(source_group)
+        
+        # Output folder selection
+        output_group = QGroupBox("Output Folder")
+        output_layout = QGridLayout()
+        
+        self.batch_output_edit = QLineEdit()
+        self.batch_output_edit.setPlaceholderText("Select output folder for wireframe files...")
+        self.batch_output_edit.setReadOnly(True)
+        
+        self.batch_output_browse_btn = QPushButton("Browse...")
+        self.batch_output_browse_btn.clicked.connect(self.browse_batch_output_folder)
+        
+        output_layout.addWidget(QLabel("Output Folder:"), 0, 0)
+        output_layout.addWidget(self.batch_output_edit, 0, 1)
+        output_layout.addWidget(self.batch_output_browse_btn, 0, 2)
+        
+        output_group.setLayout(output_layout)
+        layout.addWidget(output_group)
+        
+        # Export options
+        options_group = QGroupBox("Export Options")
+        options_layout = QGridLayout()
+        
+        options_layout.addWidget(QLabel("Export Format:"), 0, 0)
+        self.batch_format_combo = QComboBox()
+        self.batch_format_combo.addItems(["json", "csv", "numpy", "ply", "obj"])
+        self.batch_format_combo.setCurrentText("json")
+        options_layout.addWidget(self.batch_format_combo, 0, 1)
+        
+        options_group.setLayout(options_layout)
+        layout.addWidget(options_group)
+        
+        # File preview
+        preview_group = QGroupBox("Files to Process")
+        preview_layout = QVBoxLayout()
+        
+        self.batch_file_list = QListWidget()
+        self.batch_file_list.setMaximumHeight(150)
+        preview_layout.addWidget(self.batch_file_list)
+        
+        preview_group.setLayout(preview_layout)
+        layout.addWidget(preview_group)
+        
+        # Batch processing controls
+        control_group = QGroupBox("Batch Processing")
+        control_layout = QVBoxLayout()
+        
+        self.batch_export_btn = QPushButton("Start Batch Export")
+        self.batch_export_btn.clicked.connect(self.start_batch_export)
+        self.batch_export_btn.setEnabled(False)
+        
+        self.batch_progress_bar = QProgressBar()
+        self.batch_progress_bar.setVisible(False)
+        
+        self.batch_file_progress_label = QLabel("")
+        self.batch_file_progress_label.setVisible(False)
+        
+        control_layout.addWidget(self.batch_export_btn)
+        control_layout.addWidget(self.batch_progress_bar)
+        control_layout.addWidget(self.batch_file_progress_label)
+        
+        control_group.setLayout(control_layout)
+        layout.addWidget(control_group)
+        
+        # Log display
+        log_group = QGroupBox("Batch Export Log")
+        log_layout = QVBoxLayout()
+        
+        self.batch_log_text = QTextEdit()
+        self.batch_log_text.setMaximumHeight(200)
+        self.batch_log_text.setReadOnly(True)
+        
+        log_layout.addWidget(self.batch_log_text)
+        log_group.setLayout(log_layout)
+        layout.addWidget(log_group)
+        
+        layout.addStretch()
+        tab.setLayout(layout)
+        return tab
+    
+    def browse_batch_source_folder(self):
+        """Browse for source folder containing OBJ files."""
+        folder_path = QFileDialog.getExistingDirectory(
+            self,
+            "Select Source Folder",
+            str(Path.home())
+        )
+        
+        if folder_path:
+            self.batch_source_edit.setText(folder_path)
+            self.update_batch_file_list()
+            self.check_batch_ready()
+    
+    def browse_batch_output_folder(self):
+        """Browse for output folder."""
+        folder_path = QFileDialog.getExistingDirectory(
+            self,
+            "Select Output Folder",
+            str(Path.home())
+        )
+        
+        if folder_path:
+            self.batch_output_edit.setText(folder_path)
+            self.check_batch_ready()
+    
+    def update_batch_file_list(self):
+        """Update the list of files to be processed."""
+        self.batch_file_list.clear()
+        
+        source_path = self.batch_source_edit.text().strip()
+        if not source_path:
+            return
+        
+        try:
+            source_dir = Path(source_path)
+            obj_files = list(source_dir.glob("*.obj"))
+            
+            if obj_files:
+                for obj_file in obj_files:
+                    item = QListWidgetItem(obj_file.name)
+                    self.batch_file_list.addItem(item)
+                
+                self.batch_log_text.append(f"Found {len(obj_files)} OBJ files in source folder")
+            else:
+                self.batch_log_text.append("No OBJ files found in source folder")
+                
+        except Exception as e:
+            self.batch_log_text.append(f"Error scanning source folder: {str(e)}")
+    
+    def check_batch_ready(self):
+        """Check if batch processing is ready to start."""
+        source_ready = bool(self.batch_source_edit.text().strip())
+        output_ready = bool(self.batch_output_edit.text().strip())
+        
+        self.batch_export_btn.setEnabled(source_ready and output_ready)
+    
+    def start_batch_export(self):
+        """Start the batch export process."""
+        source_folder = self.batch_source_edit.text().strip()
+        output_folder = self.batch_output_edit.text().strip()
+        output_format = self.batch_format_combo.currentText()
+        
+        if not source_folder or not output_folder:
+            QMessageBox.warning(self, "Warning", "Please select both source and output folders.")
+            return
+        
+        # Start batch export in thread
+        self.batch_export_thread = BatchExportThread(source_folder, output_folder, output_format)
+        
+        self.batch_export_thread.progress.connect(self.batch_progress_bar.setValue)
+        self.batch_export_thread.file_progress.connect(self.update_batch_file_progress)
+        self.batch_export_thread.finished.connect(self.batch_export_finished)
+        self.batch_export_thread.error.connect(self.batch_export_error)
+        
+        self.batch_export_btn.setEnabled(False)
+        self.batch_progress_bar.setVisible(True)
+        self.batch_file_progress_label.setVisible(True)
+        self.batch_progress_bar.setValue(0)
+        
+        self.batch_log_text.append(f"Starting batch export from {source_folder} to {output_folder}...")
+        self.batch_export_thread.start()
+    
+    def update_batch_file_progress(self, filename: str, current: int, total: int):
+        """Update the file progress display."""
+        self.batch_file_progress_label.setText(f"Processing: {filename} ({current}/{total})")
+        self.batch_log_text.append(f"Processing {filename} ({current}/{total})...")
+    
+    def batch_export_finished(self, message: str, success: bool):
+        """Handle batch export completion."""
+        self.batch_export_btn.setEnabled(True)
+        self.batch_progress_bar.setVisible(False)
+        self.batch_file_progress_label.setVisible(False)
+        
+        self.batch_log_text.append(message)
+        self.statusBar().showMessage(message)
+        
+        if success:
+            QMessageBox.information(self, "Batch Export Complete", message)
+        else:
+            QMessageBox.warning(self, "Batch Export Warning", message)
+    
+    def batch_export_error(self, error_message: str):
+        """Handle batch export error."""
+        self.batch_export_btn.setEnabled(True)
+        self.batch_progress_bar.setVisible(False)
+        self.batch_file_progress_label.setVisible(False)
+        
+        self.batch_log_text.append(f"ERROR: {error_message}")
+        self.statusBar().showMessage(f"Batch export failed: {error_message}")
+        
+        QMessageBox.critical(self, "Batch Export Error", error_message)
     
     def browse_model_file(self):
         """Browse for a 3D model file."""

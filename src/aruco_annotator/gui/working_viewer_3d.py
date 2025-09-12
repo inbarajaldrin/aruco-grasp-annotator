@@ -1095,6 +1095,8 @@ Watertight: {info['is_watertight']}"""
             self.face_picker_btn.setVisible(True)
             if hasattr(self, 'all_sides_btn') and self.all_sides_btn is not None:
                 self.all_sides_btn.setVisible(True)
+            if hasattr(self, 'corner_markers_btn') and self.corner_markers_btn is not None:
+                self.corner_markers_btn.setVisible(True)
         elif not hasattr(self, 'click_place_btn') or self.click_place_btn is None:
             # Create the alternative placement buttons now
             self.setup_alternative_placement()
@@ -1458,6 +1460,10 @@ Watertight: {info['is_watertight']}"""
         self.all_sides_btn = QPushButton("📦 Add ArUco on 6 Faces")
         self.all_sides_btn.setVisible(False)
         self.all_sides_btn.clicked.connect(self.place_markers_on_all_faces)
+        
+        self.corner_markers_btn = QPushButton("🔲 Add 4 Corner Markers")
+        self.corner_markers_btn.setVisible(False)
+        self.corner_markers_btn.clicked.connect(self.place_corner_markers_on_face)
 
         # Live face selection removed per user request
         # Style all buttons
@@ -1494,12 +1500,14 @@ Watertight: {info['is_watertight']}"""
                     main_layout.insertWidget(i, self.click_place_btn)
                     main_layout.insertWidget(i+1, self.face_picker_btn)
                     main_layout.insertWidget(i+2, self.all_sides_btn)
+                    main_layout.insertWidget(i+3, self.corner_markers_btn)
                     break
             else:
                 # If no stretch found, just add at the end
                 main_layout.addWidget(self.click_place_btn)
                 main_layout.addWidget(self.face_picker_btn)
                 main_layout.addWidget(self.all_sides_btn)
+                main_layout.addWidget(self.corner_markers_btn)
     
     def place_marker_at_surface(self) -> None:
         """Place a marker at a random face center (using grouped faces, not individual triangles)."""
@@ -1661,11 +1669,192 @@ Watertight: {info['is_watertight']}"""
                     self.face_picker_btn.setVisible(False)
                 if hasattr(self, 'all_sides_btn') and self.all_sides_btn is not None:
                     self.all_sides_btn.setVisible(False)
+                if hasattr(self, 'corner_markers_btn') and self.corner_markers_btn is not None:
+                    self.corner_markers_btn.setVisible(False)
                     
             except Exception as e:
                 print(f"Error placing markers on 6 faces: {e}")
         else:
             print("⚠️ Not in placement mode or no mesh loaded")
+    
+    def place_corner_markers_on_face(self) -> None:
+        """Place 4 ArUco markers in the corners of a selected face."""
+        if self.placement_mode and self.mesh is not None:
+            try:
+                print("🔲 Starting corner markers placement on selected face...")
+                
+                # Get mesh data
+                vertices = np.asarray(self.mesh.vertices)
+                triangles = np.asarray(self.mesh.triangles)
+                
+                # Group triangles into faces
+                face_groups = self.group_triangles_by_face(triangles, vertices)
+                
+                if len(face_groups) == 0:
+                    print("⚠️ No faces found for corner marker placement")
+                    return
+                
+                # Open face picker dialog for corner markers
+                from .face_picker_dialog import FacePickerDialog
+                dialog = FacePickerDialog(self, triangles, vertices)
+                dialog.setWindowTitle("Select Face for Corner Markers")
+                
+                # Show dialog and get result
+                if dialog.exec() == 1:  # Dialog accepted
+                    selected_face_data = dialog.selected_face_data
+                    if selected_face_data is not None:
+                        # Extract data from dictionary format
+                        face_center = selected_face_data['face_center']
+                        face_normal = selected_face_data['face_normal']
+                        face_area = selected_face_data['area']
+                        triangle_idx = selected_face_data['triangle_idx']
+                        
+                        print(f"🎯 Selected face for corner markers:")
+                        print(f"   Face center: ({float(face_center[0]):.3f}, {float(face_center[1]):.3f}, {float(face_center[2]):.3f})")
+                        print(f"   Face normal: ({float(face_normal[0]):.3f}, {float(face_normal[1]):.3f}, {float(face_normal[2]):.3f})")
+                        print(f"   Face area: {float(face_area):.4f}")
+                        
+                        # Get all triangle indices for this face by re-running face detection
+                        face_groups = self.group_triangles_by_face(triangles, vertices)
+                        triangle_indices = []
+                        for face_center_calc, face_normal_calc, face_area_calc, tri_indices in face_groups:
+                            if (np.allclose(face_center, face_center_calc, atol=1e-6) and 
+                                np.allclose(face_normal, face_normal_calc, atol=1e-6)):
+                                triangle_indices = tri_indices
+                                break
+                        
+                        if not triangle_indices:
+                            print("⚠️ Could not find triangle indices for selected face")
+                            return
+                        
+                        # Calculate corner positions
+                        corner_positions = self.calculate_face_corners(face_center, face_normal, face_area, triangle_indices, vertices)
+                        
+                        if len(corner_positions) == 4:
+                            print(f"✅ Calculated 4 corner positions for face")
+                            
+                            # Place markers at each corner
+                            for i, corner_pos in enumerate(corner_positions):
+                                print(f"🔲 Placing corner marker {i+1}/4 at: ({float(corner_pos[0]):.3f}, {float(corner_pos[1]):.3f}, {float(corner_pos[2]):.3f})")
+                                
+                                # Emit signal to place marker
+                                self.point_picked.emit(tuple(corner_pos), tuple(face_normal))
+                                
+                            print(f"✅ Successfully placed 4 corner markers on selected face")
+                        else:
+                            print(f"⚠️ Could not calculate 4 corner positions (got {len(corner_positions)})")
+                    else:
+                        print("⚠️ No face selected for corner markers")
+                else:
+                    print("❌ Corner markers placement cancelled")
+                    
+            except Exception as e:
+                print(f"❌ Error in corner markers placement: {e}")
+        else:
+            print("⚠️ Not in placement mode or no mesh loaded")
+    
+    def calculate_face_corners(self, face_center, face_normal, face_area, triangle_indices, vertices):
+        """Calculate the 4 corner positions of a face."""
+        try:
+            print(f"🔲 Calculating corners for face with {len(triangle_indices)} triangles...")
+            
+            # Get all vertices that belong to this face
+            face_vertices = set()
+            for tri_idx in triangle_indices:
+                triangle = self.mesh.triangles[tri_idx]
+                face_vertices.update(triangle)
+            
+            face_vertices = list(face_vertices)
+            print(f"🔲 Face has {len(face_vertices)} unique vertices")
+            
+            if len(face_vertices) < 4:
+                print(f"⚠️ Face has only {len(face_vertices)} vertices, cannot determine 4 corners")
+                return []
+            
+            # Get vertex positions
+            vertex_positions = np.array([vertices[i] for i in face_vertices])
+            
+            # Project vertices onto the face plane
+            face_center = np.array(face_center, dtype=float)
+            face_normal = np.array(face_normal, dtype=float)
+            
+            # Create a coordinate system on the face plane
+            # Find two orthogonal vectors in the plane
+            if abs(face_normal[0]) < 0.9:
+                u = np.array([1, 0, 0])
+            else:
+                u = np.array([0, 1, 0])
+            
+            # Make u orthogonal to face_normal
+            u = u - np.dot(u, face_normal) * face_normal
+            u = u / (np.linalg.norm(u) + 1e-8)
+            
+            # v is perpendicular to both u and face_normal
+            v = np.cross(face_normal, u)
+            v = v / (np.linalg.norm(v) + 1e-8)
+            
+            # Project vertices onto the face plane
+            projected_vertices = []
+            for vertex_pos in vertex_positions:
+                # Project vertex onto face plane
+                relative_pos = vertex_pos - face_center
+                u_coord = np.dot(relative_pos, u)
+                v_coord = np.dot(relative_pos, v)
+                projected_vertices.append([u_coord, v_coord])
+            
+            projected_vertices = np.array(projected_vertices)
+            
+            # Find the bounding box of projected vertices
+            u_min, u_max = np.min(projected_vertices[:, 0]), np.max(projected_vertices[:, 0])
+            v_min, v_max = np.min(projected_vertices[:, 1]), np.max(projected_vertices[:, 1])
+            
+            # Calculate corner positions in 2D
+            corners_2d = [
+                [u_min, v_min],  # Bottom-left
+                [u_max, v_min],  # Bottom-right
+                [u_max, v_max],  # Top-right
+                [u_min, v_max]   # Top-left
+            ]
+            
+            # Convert back to 3D coordinates and offset inward by half marker size
+            corners_3d = []
+            
+            # Get marker size from the marker panel (default to 0.03m if not available)
+            marker_size = 0.03  # Default marker size
+            try:
+                # Try to get marker size from the main window's marker panel
+                if hasattr(self, 'parent') and hasattr(self.parent, 'marker_panel'):
+                    marker_size = self.parent.marker_panel.size_spinbox.value()
+                elif hasattr(self, 'marker_panel'):
+                    marker_size = self.marker_panel.size_spinbox.value()
+            except:
+                pass  # Use default if we can't get the size
+            
+            # Offset inward by half marker size to keep markers within face boundaries
+            offset_distance = marker_size / 2.0
+            print(f"🔲 Using marker size: {marker_size*1000:.1f}mm, offsetting inward by: {offset_distance*1000:.1f}mm")
+            
+            for corner_2d in corners_2d:
+                # Calculate corner position on face surface
+                corner_3d = face_center + corner_2d[0] * u + corner_2d[1] * v
+                
+                # Calculate offset direction (toward face center)
+                offset_direction = face_center - corner_3d
+                offset_direction = offset_direction / (np.linalg.norm(offset_direction) + 1e-8)
+                
+                # Offset inward by half marker size to keep marker within boundaries
+                corner_3d_offset = corner_3d + offset_distance * offset_direction
+                corners_3d.append(corner_3d_offset)
+            
+            print(f"✅ Calculated 4 corners (offset inward by {offset_distance*1000:.1f}mm to keep markers within face):")
+            for i, corner in enumerate(corners_3d):
+                print(f"   Corner {i+1}: ({float(corner[0]):.3f}, {float(corner[1]):.3f}, {float(corner[2]):.3f})")
+            
+            return corners_3d
+            
+        except Exception as e:
+            print(f"❌ Error calculating face corners: {e}")
+            return []
     
     def _project_to_surface_with_raycast(self, face_center, face_normal, triangles, vertices):
         """Project from face center to the actual surface using improved ray casting for complex shapes."""
@@ -2087,6 +2276,10 @@ Watertight: {info['is_watertight']}"""
         if hasattr(self, 'all_sides_btn') and self.all_sides_btn is not None:
             self.all_sides_btn.setVisible(True)
             self.all_sides_btn.setText("📦 Add ArUco on 6 Faces")
+            
+        if hasattr(self, 'corner_markers_btn') and self.corner_markers_btn is not None:
+            self.corner_markers_btn.setVisible(True)
+            self.corner_markers_btn.setText("🔲 Add 4 Corner Markers")
 
 
     def setup_face_highlighting(self) -> None:

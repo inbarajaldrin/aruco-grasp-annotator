@@ -138,15 +138,3 @@ dmypy.json
 .idea/
 *.swp
 *.swo
-
-# Project specific
-annotations/
-models/
-*.stl
-*.obj
-*.ply
-*.step
-*.stp
-*.json
-!example_annotations.json
-!src/wireframe_exporter/examples/*.json
