@@ -79,8 +79,8 @@ def transform_mesh_to_camera_frame(vertices, marker_pose, aruco_annotation):
     # OpenCV uses a different coordinate system for camera operations
     # This matrix transforms from 3D graphics to OpenCV convention
     coord_transform = np.array([
-        [-1,  0,  0],  # X-axis: flip (3D graphics X-right → OpenCV X-left)
-        [0,   1,  0],  # Y-axis: unchanged (both systems use Y-up)
+        [1,  0,  0],  # X-axis
+        [0,   1,  0],  # Y-axis
         [0,   0, -1]   # Z-axis: flip (3D graphics Z-forward → OpenCV Z-backward)
     ])
     # Apply transformation to marker position

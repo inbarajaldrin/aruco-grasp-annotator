@@ -5,6 +5,141 @@ import json
 import os
 import argparse
 from pathlib import Path
+from scipy.spatial.transform import Rotation as R
+
+# =============================================================================
+# KALMAN FILTER CONFIGURATION - ADJUSTABLE VARIABLES
+# =============================================================================
+
+# Temporal filtering parameters
+MAX_MOVEMENT_THRESHOLD = 0.05  # meters - maximum allowed movement between frames
+HOLD_REQUIRED_FRAMES = 2       # frames - required stable detections before confirmation
+GHOST_TRACKING_FRAMES = 15     # frames - continue tracking when marker lost
+BLEND_FACTOR = 0.99            # 0.0-1.0 - trust in measurements vs predictions
+
+# Kalman filter noise parameters
+PROCESS_NOISE_POSITION = 1e-4   # Process noise for position (x,y,z)
+PROCESS_NOISE_QUATERNION = 1e-3 # Process noise for quaternion (qx,qy,qz,qw)
+PROCESS_NOISE_VELOCITY = 1e-4   # Process noise for velocity (vx,vy,vz)
+MEASUREMENT_NOISE_POSITION = 1e-4 # Measurement noise for position
+MEASUREMENT_NOISE_QUATERNION = 1e-4 # Measurement noise for quaternion
+
+# Camera parameters
+CAMERA_WIDTH = 1280
+CAMERA_HEIGHT = 720
+CAMERA_HFOV = 69.4  # degrees
+CAMERA_VFOV = 42.5  # degrees
+
+# ArUco parameters
+MARKER_SIZE = 0.021  # meters - adjust based on your markers
+ARUCO_DICTIONARY = aruco.DICT_4X4_50
+
+# =============================================================================
+# KALMAN FILTER CLASSES
+# =============================================================================
+
+class QuaternionKalman:
+    """Kalman filter for 6D pose estimation with quaternions"""
+    
+    def __init__(self):
+        # 10 states: [x, y, z, qx, qy, qz, qw, vx, vy, vz]
+        self.kf = cv2.KalmanFilter(10, 7)
+        
+        dt = 1.0  # Time step (assuming 1 frame = 1 time unit)
+        
+        # A: Transition matrix (10x10)
+        self.kf.transitionMatrix = np.eye(10, dtype=np.float32)
+        for i in range(3):  # x += vx*dt, y += vy*dt, z += vz*dt
+            self.kf.transitionMatrix[i, i+7] = dt
+        
+        # H: Measurement matrix (7x10) - we measure position and quaternion
+        self.kf.measurementMatrix = np.zeros((7, 10), dtype=np.float32)
+        self.kf.measurementMatrix[0:7, 0:7] = np.eye(7)
+        
+        # Q: Process noise covariance
+        self.kf.processNoiseCov = np.eye(10, dtype=np.float32) * 1e-6
+        for i in range(3):   # position noise
+            self.kf.processNoiseCov[i, i] = PROCESS_NOISE_POSITION
+        for i in range(3, 7):  # quaternion noise
+            self.kf.processNoiseCov[i, i] = PROCESS_NOISE_QUATERNION
+        for i in range(7, 10):  # velocity noise
+            self.kf.processNoiseCov[i, i] = PROCESS_NOISE_VELOCITY
+        
+        # R: Measurement noise covariance
+        self.kf.measurementNoiseCov = np.eye(7, dtype=np.float32)
+        for i in range(3):   # position measurement noise
+            self.kf.measurementNoiseCov[i, i] = MEASUREMENT_NOISE_POSITION
+        for i in range(3, 7):  # quaternion measurement noise
+            self.kf.measurementNoiseCov[i, i] = MEASUREMENT_NOISE_QUATERNION
+        
+        # Initial error covariance
+        self.kf.errorCovPost = np.eye(10, dtype=np.float32)
+        
+        # Initial state
+        self.kf.statePost = np.zeros((10, 1), dtype=np.float32)
+        self.kf.statePost[3:7] = np.array([[0], [0], [0], [1]], dtype=np.float32)  # Identity quaternion
+    
+    def correct(self, tvec, rvec):
+        """Update filter with new measurement"""
+        quat = rvec_to_quat(rvec)
+        measurement = np.vstack((tvec.reshape(3, 1), np.array(quat).reshape(4, 1))).astype(np.float32)
+        self.kf.correct(measurement)
+    
+    def predict(self):
+        """Predict next state"""
+        pred = self.kf.predict()
+        pred_tvec = pred[0:3].flatten()
+        pred_quat = pred[3:7].flatten()
+        # Normalize quaternion to prevent drift
+        pred_quat /= np.linalg.norm(pred_quat)
+        pred_rvec = quat_to_rvec(pred_quat).flatten()
+        return pred_tvec, pred_rvec
+
+# =============================================================================
+# UTILITY FUNCTIONS
+# =============================================================================
+
+def rvec_to_quat(rvec):
+    """Convert OpenCV rotation vector to quaternion [x, y, z, w]"""
+    rot, _ = cv2.Rodrigues(rvec)
+    return R.from_matrix(rot).as_quat()
+
+def quat_to_rvec(quat):
+    """Convert quaternion [x, y, z, w] to OpenCV rotation vector"""
+    rot = R.from_quat(quat).as_matrix()
+    rvec, _ = cv2.Rodrigues(rot)
+    return rvec
+
+def slerp_quat(q1, q2, blend=0.5):
+    """Spherical linear interpolation between two quaternions"""
+    # Normalize quaternions
+    q1 = q1 / np.linalg.norm(q1)
+    q2 = q2 / np.linalg.norm(q2)
+    
+    # Calculate dot product
+    dot = np.dot(q1, q2)
+    
+    # If the dot product is negative, slerp won't take the shorter path
+    if dot < 0.0:
+        q2 = -q2
+        dot = -dot
+    
+    # If the inputs are too close for comfort, linearly interpolate
+    if dot > 0.9995:
+        result = q1 + blend * (q2 - q1)
+        return result / np.linalg.norm(result)
+    
+    # Calculate the angle between the quaternions
+    theta_0 = np.arccos(np.abs(dot))
+    sin_theta_0 = np.sin(theta_0)
+    
+    theta = theta_0 * blend
+    sin_theta = np.sin(theta)
+    
+    s0 = np.cos(theta) - dot * sin_theta / sin_theta_0
+    s1 = sin_theta / sin_theta_0
+    
+    return s0 * q1 + s1 * q2
 
 def load_wireframe_data(json_file):
     """Load wireframe data from JSON file"""
@@ -85,8 +220,8 @@ def estimate_object_pose_from_marker(marker_pose, aruco_annotation):
     
     # Coordinate system transformation matrix
     coord_transform = np.array([
-        [-1,  0,  0],  # X-axis: flip (3D graphics X-right → OpenCV X-left)
-        [0,   1,  0],  # Y-axis: unchanged (both systems use Y-up)
+        [1,  0,  0],  # X-axis
+        [0,   1,  0],  # Y-axis
         [0,   0, -1]   # Z-axis: flip (3D graphics Z-forward → OpenCV Z-backward)
     ])
     
@@ -133,8 +268,8 @@ def transform_mesh_to_camera_frame(vertices, object_pose):
     
     # Coordinate system transformation matrix
     coord_transform = np.array([
-        [1,  0,  0],  # X-axis
-        [0,   1,  0],  # Y-axis
+        [-1,  0,  0],  # X-axis: flip (3D graphics X-right → OpenCV X-left)
+        [0,   1,  0],  # Y-axis: unchanged (both systems use Y-up)
         [0,   0, -1]   # Z-axis: flip (3D graphics Z-forward → OpenCV Z-backward)
     ])
     
@@ -170,6 +305,25 @@ def euler_to_rotation_matrix(roll, pitch, yaw):
     
     # Combine rotations (order: Rz * Ry * Rx)
     return Rz @ Ry @ Rx
+
+def rotation_matrix_to_euler(rotation_matrix):
+    """Convert rotation matrix to Euler angles (roll, pitch, yaw) in radians"""
+    # Extract RPY angles from rotation matrix
+    # Using ZYX convention (yaw-pitch-roll)
+    sy = np.sqrt(rotation_matrix[0, 0] * rotation_matrix[0, 0] + rotation_matrix[1, 0] * rotation_matrix[1, 0])
+    
+    singular = sy < 1e-6
+    
+    if not singular:
+        roll = np.arctan2(rotation_matrix[2, 1], rotation_matrix[2, 2])
+        pitch = np.arctan2(-rotation_matrix[2, 0], sy)
+        yaw = np.arctan2(rotation_matrix[1, 0], rotation_matrix[0, 0])
+    else:
+        roll = np.arctan2(-rotation_matrix[1, 2], rotation_matrix[1, 1])
+        pitch = np.arctan2(-rotation_matrix[2, 0], sy)
+        yaw = 0
+    
+    return np.array([roll, pitch, yaw])
 
 def project_vertices_to_image(vertices, camera_matrix, dist_coeffs):
     """Project 3D vertices to 2D image coordinates"""
@@ -222,8 +376,93 @@ def draw_wireframe(frame, projected_vertices, edges, color=(0, 255, 0), thicknes
     for vertex in valid_vertices:
         cv2.circle(frame, tuple(vertex), 3, (255, 0, 0), -1)
 
-def detect_object_pose_with_mesh_overlay(model_name=None, data_dir=None):
-    """Detect ArUco marker and overlay mesh wireframe"""
+def estimate_pose_with_kalman(frame, corners, ids, camera_matrix, dist_coeffs, marker_size,
+                             kalman_filters, marker_stabilities, last_seen_frames, current_frame):
+    """Estimate pose with Kalman filtering and stability checking"""
+    
+    if corners and ids:
+        for corner, marker_id in zip(corners, ids):
+            marker_id = int(marker_id)
+            
+            # Initialize tracking state if this is a new marker
+            if marker_id not in kalman_filters:
+                kalman_filters[marker_id] = QuaternionKalman()
+                marker_stabilities[marker_id] = {
+                    "last_tvec": None,
+                    "last_frame": -1,
+                    "confirmed": False,
+                    "hold_counter": 0
+                }
+                last_seen_frames[marker_id] = 0
+            
+            kalman = kalman_filters[marker_id]
+            stability = marker_stabilities[marker_id]
+            
+            # Prepare points for solvePnP
+            image_points = corner[0].reshape(-1, 2)
+            half_size = marker_size / 2
+            object_points = np.array([
+                [-half_size,  half_size, 0],
+                [ half_size,  half_size, 0],
+                [ half_size, -half_size, 0],
+                [-half_size, -half_size, 0]
+            ], dtype=np.float32)
+            
+            # Estimate pose
+            success, rvec, tvec = cv2.solvePnP(object_points, image_points, camera_matrix, dist_coeffs)
+            
+            if success:
+                tvec_flat = tvec.flatten()
+                distance = np.linalg.norm(tvec_flat - stability["last_tvec"]) if stability["last_tvec"] is not None else 0
+                movement_ok = distance < MAX_MOVEMENT_THRESHOLD
+                
+                if movement_ok:
+                    stability["hold_counter"] += 1
+                else:
+                    stability["hold_counter"] = 0
+                
+                stability["last_tvec"] = tvec_flat
+                stability["last_frame"] = current_frame
+                
+                if stability["hold_counter"] >= HOLD_REQUIRED_FRAMES:
+                    stability["confirmed"] = True
+                    
+                    # Apply Kalman filtering with blending
+                    measured_quat = rvec_to_quat(rvec)
+                    pred_tvec, pred_rvec = kalman.predict()
+                    pred_quat = rvec_to_quat(pred_rvec)
+                    
+                    # Blend measurements with predictions
+                    blended_quat = slerp_quat(pred_quat, measured_quat, blend=BLEND_FACTOR)
+                    blended_rvec = quat_to_rvec(blended_quat)
+                    blended_tvec = BLEND_FACTOR * tvec_flat + (1 - BLEND_FACTOR) * pred_tvec
+                    
+                    # Update Kalman filter
+                    kalman.correct(blended_tvec, blended_rvec)
+                    last_seen_frames[marker_id] = current_frame
+                    
+                    return blended_tvec, blended_rvec, marker_id, True
+                else:
+                    return tvec_flat, rvec.flatten(), marker_id, False
+    
+    # Handle ghost tracking for confirmed markers
+    for marker_id, kalman in kalman_filters.items():
+        stability = marker_stabilities[marker_id]
+        last_seen = last_seen_frames[marker_id]
+        
+        if not stability["confirmed"]:
+            continue
+        
+        if current_frame - last_seen < GHOST_TRACKING_FRAMES:
+            pred_tvec, pred_rvec = kalman.predict()
+            return pred_tvec, pred_rvec, marker_id, True
+        else:
+            stability["confirmed"] = False
+    
+    return None, None, None, False
+
+def detect_object_pose_with_kalman_filtering(model_name=None, data_dir=None):
+    """Detect ArUco marker and overlay mesh wireframe with Kalman filtering"""
     
     # Set default data directory if not provided
     if data_dir is None:
@@ -283,17 +522,20 @@ def detect_object_pose_with_mesh_overlay(model_name=None, data_dir=None):
     
     print(f"Total markers available: {len(marker_annotations)}")
     
-    # Camera parameters
-    camera_matrix = np.array([[800, 0, 320],
-                              [0, 800, 240],
+    # Calculate camera matrix from field of view
+    fx = CAMERA_WIDTH / (2 * np.tan(np.deg2rad(CAMERA_HFOV / 2)))
+    fy = CAMERA_HEIGHT / (2 * np.tan(np.deg2rad(CAMERA_VFOV / 2)))
+    camera_matrix = np.array([[fx, 0, CAMERA_WIDTH / 2],
+                              [0, fy, CAMERA_HEIGHT / 2],
                               [0, 0, 1]], dtype=np.float32)
     dist_coeffs = np.zeros((5, 1), dtype=np.float32)
     
-    # ArUco parameters - we'll calculate marker sizes dynamically for each detected marker
-    target_ids = list(marker_annotations.keys())  # All available marker IDs
+    print(f"Camera matrix: fx={fx:.1f}, fy={fy:.1f}")
     
+    # ArUco parameters
+    target_ids = list(marker_annotations.keys())
     print(f"Looking for markers: {target_ids}")
-    dictionary = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
+    dictionary = aruco.getPredefinedDictionary(ARUCO_DICTIONARY)
     parameters = aruco.DetectorParameters()
     detector = aruco.ArucoDetector(dictionary, parameters)
     
@@ -304,21 +546,35 @@ def detect_object_pose_with_mesh_overlay(model_name=None, data_dir=None):
         return
     
     # Set camera properties
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
     
-    print("Object Pose Estimation Started")
+    print("Object Pose Estimation with Kalman Filtering Started")
     print(f"Looking for markers {target_ids} to estimate object pose")
     print("Press 'q' to quit, 's' to toggle mesh display")
-    print("=" * 50)
+    print("=" * 60)
+    print(f"Kalman Filter Settings:")
+    print(f"  Max Movement: {MAX_MOVEMENT_THRESHOLD}m")
+    print(f"  Hold Required: {HOLD_REQUIRED_FRAMES} frames")
+    print(f"  Ghost Tracking: {GHOST_TRACKING_FRAMES} frames")
+    print(f"  Blend Factor: {BLEND_FACTOR}")
+    print("=" * 60)
     
     show_mesh = True
+    current_frame = 0
+    
+    # Kalman filter tracking
+    kalman_filters = {}
+    marker_stabilities = {}
+    last_seen_frames = {}
     
     while True:
         ret, frame = cap.read()
         if not ret:
             print("Failed to read from camera")
             break
+        
+        current_frame += 1
         
         # Convert to grayscale
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -337,7 +593,7 @@ def detect_object_pose_with_mesh_overlay(model_name=None, data_dir=None):
                     detected_targets.append((i, marker_id))
             
             if detected_targets:
-                # First pass: collect all successful pose estimations
+                # First pass: collect all successful pose estimations with Kalman filtering
                 successful_detections = []
                 for target_idx, marker_id in detected_targets:
                     target_corners = corners[target_idx]
@@ -348,17 +604,13 @@ def detect_object_pose_with_mesh_overlay(model_name=None, data_dir=None):
                     border_percentage = marker_annotation['border_width']
                     marker_size = base_marker_size * (1 + border_percentage)
                     
-                    # Estimate pose
-                    object_points = np.array([
-                        [-marker_size/2,  marker_size/2, 0],
-                        [ marker_size/2,  marker_size/2, 0],
-                        [ marker_size/2, -marker_size/2, 0],
-                        [-marker_size/2, -marker_size/2, 0]
-                    ], dtype=np.float32)
+                    # Estimate pose with Kalman filtering
+                    tvec, rvec, filtered_marker_id, is_confirmed = estimate_pose_with_kalman(
+                        frame, [target_corners], [marker_id], camera_matrix, dist_coeffs, 
+                        marker_size, kalman_filters, marker_stabilities, last_seen_frames, current_frame
+                    )
                     
-                    success, rvec, tvec = cv2.solvePnP(object_points, target_corners[0], camera_matrix, dist_coeffs)
-                    
-                    if success:
+                    if tvec is not None and rvec is not None:
                         position = tvec.flatten()
                         distance = np.linalg.norm(position)
                         successful_detections.append({
@@ -370,13 +622,15 @@ def detect_object_pose_with_mesh_overlay(model_name=None, data_dir=None):
                             'rvec': rvec,
                             'tvec': tvec,
                             'position': position,
-                            'distance': distance
+                            'distance': distance,
+                            'is_confirmed': is_confirmed
                         })
                 
-                # Find the most confident marker (closest to camera)
+                # Find the most confident marker (closest to camera) among confirmed detections
                 best_marker = None
-                if successful_detections:
-                    best_marker = min(successful_detections, key=lambda x: x['distance'])
+                confirmed_detections = [d for d in successful_detections if d['is_confirmed']]
+                if confirmed_detections:
+                    best_marker = min(confirmed_detections, key=lambda x: x['distance'])
                 
                 # Process all detected markers for display, but only show wireframe for the best one
                 for i, detection in enumerate(successful_detections):
@@ -389,14 +643,15 @@ def detect_object_pose_with_mesh_overlay(model_name=None, data_dir=None):
                     tvec = detection['tvec']
                     position = detection['position']
                     distance = detection['distance']
+                    is_confirmed = detection['is_confirmed']
                     face_type = marker_annotation['face_type']
                     
                     # Draw coordinate axes for all markers
                     cv2.drawFrameAxes(frame, camera_matrix, dist_coeffs, rvec, tvec, marker_size)
                     
-                    # Only show wireframe for the most confident (closest) marker
+                    # Only show wireframe for the most confident (closest) confirmed marker
                     is_best_marker = (detection == best_marker)
-                    if show_mesh and is_best_marker:
+                    if show_mesh and is_best_marker and is_confirmed:
                         # Estimate object pose from marker pose
                         object_tvec, object_rvec = estimate_object_pose_from_marker((tvec, rvec), marker_annotation)
                         
@@ -415,29 +670,42 @@ def detect_object_pose_with_mesh_overlay(model_name=None, data_dir=None):
                     
                     # Display information for this marker
                     # Position text based on marker index to avoid overlap
-                    y_offset = 30 + i * 150  # Increased spacing for object pose info
+                    y_offset = 30 + i * 120
                     
                     # Use different colors for best vs other markers
-                    text_color = (0, 255, 0) if is_best_marker else (0, 255, 255)
-                    marker_status = " (BEST)" if is_best_marker else ""
+                    if is_best_marker and is_confirmed:
+                        text_color = (0, 255, 0)  # Green for best confirmed marker
+                        marker_status = " (BEST)"
+                    elif is_confirmed:
+                        text_color = (0, 255, 255)  # Cyan for other confirmed markers
+                        marker_status = " (CONFIRMED)"
+                    else:
+                        text_color = (255, 255, 0)  # Yellow for holding markers
+                        marker_status = " (HOLDING)"
                     
                     cv2.putText(frame, f"Marker ID: {marker_id} ({face_type}){marker_status}", (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.8, text_color, 2)
                     cv2.putText(frame, f"Marker Pos: ({position[0]:.3f}, {position[1]:.3f}, {position[2]:.3f})", 
                                (10, y_offset + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, text_color, 2)
-                    cv2.putText(frame, f"Marker Dist: {distance:.3f}m", (10, y_offset + 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, text_color, 2)
+                    cv2.putText(frame, f"Distance: {distance:.3f}m", (10, y_offset + 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, text_color, 2)
                     
-                    # Show object pose for best marker
-                    if is_best_marker:
+                    # Show object pose info only for the best marker
+                    if is_best_marker and is_confirmed:
                         object_tvec, object_rvec = estimate_object_pose_from_marker((tvec, rvec), marker_annotation)
-                        object_distance = np.linalg.norm(object_tvec)
+                        
+                        # Convert rotation vector to RPY angles
+                        rotation_matrix, _ = cv2.Rodrigues(object_rvec)
+                        rpy = rotation_matrix_to_euler(rotation_matrix)
+                        
                         cv2.putText(frame, f"Object Pos: ({object_tvec[0]:.3f}, {object_tvec[1]:.3f}, {object_tvec[2]:.3f})", 
                                    (10, y_offset + 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
-                        cv2.putText(frame, f"Object Dist: {object_distance:.3f}m", (10, y_offset + 120), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+                        cv2.putText(frame, f"Object RPY: ({np.degrees(rpy[0]):.1f}deg, {np.degrees(rpy[1]):.1f}deg, {np.degrees(rpy[2]):.1f}deg)", 
+                                   (10, y_offset + 120), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
                         
                         # Print to console for the best marker
                         print(f"\rBest Marker {marker_id} ({face_type}): Marker=({position[0]:.3f}, {position[1]:.3f}, {position[2]:.3f}) | "
                               f"Object=({object_tvec[0]:.3f}, {object_tvec[1]:.3f}, {object_tvec[2]:.3f}) | "
-                              f"Dist: {object_distance:.3f}m | Mesh: {'ON' if show_mesh else 'OFF'}", end="", flush=True)
+                              f"RPY=({np.degrees(rpy[0]):.1f}°, {np.degrees(rpy[1]):.1f}°, {np.degrees(rpy[2]):.1f}°) | "
+                              f"Mesh: {'ON' if show_mesh else 'OFF'}", end="", flush=True)
                 
                 # Display mesh status
                 cv2.putText(frame, f"Mesh: {'ON' if show_mesh else 'OFF'}", (10, frame.shape[0] - 50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
@@ -451,7 +719,7 @@ def detect_object_pose_with_mesh_overlay(model_name=None, data_dir=None):
                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
         
         # Show frame
-        cv2.imshow("Object Pose Estimation", frame)
+        cv2.imshow("Object Pose Estimation with Kalman Filtering", frame)
         
         # Check for key presses
         key = cv2.waitKey(1) & 0xFF
@@ -463,11 +731,11 @@ def detect_object_pose_with_mesh_overlay(model_name=None, data_dir=None):
     
     cap.release()
     cv2.destroyAllWindows()
-    print("\nObject pose estimation stopped.")
+    print("\nObject pose estimation with Kalman filtering stopped.")
 
 def main():
     """Main function with command line argument parsing"""
-    parser = argparse.ArgumentParser(description="Object Pose Estimator - Estimate 6D object pose from ArUco markers")
+    parser = argparse.ArgumentParser(description="Object Pose Estimator with Kalman Filtering - Estimate 6D object pose from ArUco markers")
     parser.add_argument("--model", "-m", type=str, default=None,
                        help="Model name to use (e.g., 'fork_orange_scaled70'). If not provided, interactive selection will be used.")
     parser.add_argument("--data-dir", "-d", type=str, default=None,
@@ -500,8 +768,8 @@ def main():
         print(f"No models found in data directory: {data_dir}")
         return
     
-    # Run the object pose estimation
-    detect_object_pose_with_mesh_overlay(model_name=args.model, data_dir=data_dir)
+    # Run the object pose estimation with Kalman filtering
+    detect_object_pose_with_kalman_filtering(model_name=args.model, data_dir=data_dir)
 
 if __name__ == "__main__":
     main()
