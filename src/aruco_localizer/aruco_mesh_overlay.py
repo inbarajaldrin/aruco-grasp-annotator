@@ -2,6 +2,9 @@ import cv2
 import cv2.aruco as aruco
 import numpy as np
 import json
+import os
+import argparse
+from pathlib import Path
 
 def load_wireframe_data(json_file):
     """Load wireframe data from JSON file"""
@@ -14,6 +17,51 @@ def load_aruco_annotations(json_file):
     with open(json_file, 'r') as f:
         data = json.load(f)
     return data['markers']
+
+def get_available_models(data_dir):
+    """Get list of available models from the data directory"""
+    wireframe_dir = Path(data_dir) / "wireframe"
+    aruco_dir = Path(data_dir) / "aruco"
+    
+    if not wireframe_dir.exists() or not aruco_dir.exists():
+        return []
+    
+    # Get all wireframe files
+    wireframe_files = list(wireframe_dir.glob("*_wireframe.json"))
+    aruco_files = list(aruco_dir.glob("*_aruco.json"))
+    
+    # Extract model names (remove _wireframe.json and _aruco.json suffixes)
+    wireframe_models = {f.stem.replace("_wireframe", "") for f in wireframe_files}
+    aruco_models = {f.stem.replace("_aruco", "") for f in aruco_files}
+    
+    # Return intersection (models that have both wireframe and aruco files)
+    available_models = wireframe_models.intersection(aruco_models)
+    return sorted(list(available_models))
+
+def select_model_interactive(available_models):
+    """Interactive model selection"""
+    if not available_models:
+        print("No models found in data directory!")
+        return None
+    
+    print("\nAvailable models:")
+    for i, model in enumerate(available_models, 1):
+        print(f"  {i}. {model}")
+    
+    while True:
+        try:
+            choice = input(f"\nSelect model (1-{len(available_models)}) or 'q' to quit: ").strip()
+            if choice.lower() == 'q':
+                return None
+            choice_num = int(choice)
+            if 1 <= choice_num <= len(available_models):
+                selected_model = available_models[choice_num - 1]
+                print(f"Selected model: {selected_model}")
+                return selected_model
+            else:
+                print(f"Please enter a number between 1 and {len(available_models)}")
+        except ValueError:
+            print("Please enter a valid number or 'q' to quit")
 
 def transform_mesh_to_camera_frame(vertices, marker_pose, aruco_annotation):
     """Transform mesh vertices from CAD frame to camera frame using ArUco annotation data"""
@@ -143,20 +191,51 @@ def draw_wireframe(frame, projected_vertices, edges, color=(0, 255, 0), thicknes
     for vertex in valid_vertices:
         cv2.circle(frame, tuple(vertex), 3, (255, 0, 0), -1)
 
-def detect_aruco_with_mesh_overlay():
+def detect_aruco_with_mesh_overlay(model_name=None, data_dir=None):
     """Detect ArUco marker and overlay mesh wireframe"""
     
+    # Set default data directory if not provided
+    if data_dir is None:
+        # Assume we're running from aruco_localizer directory, go up to find data
+        current_dir = Path(__file__).parent
+        data_dir = current_dir.parent.parent / "data"
+    
+    data_dir = Path(data_dir)
+    
+    # Get available models
+    available_models = get_available_models(data_dir)
+    
+    if not available_models:
+        print(f"No models found in data directory: {data_dir}")
+        return
+    
+    # Select model
+    if model_name is None:
+        model_name = select_model_interactive(available_models)
+        if model_name is None:
+            print("No model selected. Exiting.")
+            return
+    elif model_name not in available_models:
+        print(f"Model '{model_name}' not found in available models: {available_models}")
+        return
+    
+    # Construct file paths
+    wireframe_file = data_dir / "wireframe" / f"{model_name}_wireframe.json"
+    aruco_annotations_file = data_dir / "aruco" / f"{model_name}_aruco.json"
+    
+    print(f"Using model: {model_name}")
+    print(f"Wireframe file: {wireframe_file}")
+    print(f"ArUco annotations file: {aruco_annotations_file}")
+    
     # Load wireframe data
-    json_file = "fork_orange_scaled70_ v2_wireframe.json"
     try:
-        vertices, edges = load_wireframe_data(json_file)
+        vertices, edges = load_wireframe_data(wireframe_file)
         print(f"Loaded wireframe: {len(vertices)} vertices, {len(edges)} edges")
     except Exception as e:
         print(f"Error loading wireframe data: {e}")
         return
     
     # Load ArUco annotations
-    aruco_annotations_file = "fork_orange_scaled70_ v2_aruco_annotations.json"
     try:
         aruco_annotations = load_aruco_annotations(aruco_annotations_file)
         print(f"Loaded {len(aruco_annotations)} ArUco annotations")
@@ -341,5 +420,43 @@ def detect_aruco_with_mesh_overlay():
     cv2.destroyAllWindows()
     print("\nArUco mesh overlay stopped.")
 
+def main():
+    """Main function with command line argument parsing"""
+    parser = argparse.ArgumentParser(description="ArUco Mesh Overlay - Detect ArUco markers and overlay 3D wireframes")
+    parser.add_argument("--model", "-m", type=str, default=None,
+                       help="Model name to use (e.g., 'fork_orange_scaled70'). If not provided, interactive selection will be used.")
+    parser.add_argument("--data-dir", "-d", type=str, default=None,
+                       help="Path to data directory containing wireframe and aruco subdirectories")
+    parser.add_argument("--list-models", "-l", action="store_true",
+                       help="List available models and exit")
+    
+    args = parser.parse_args()
+    
+    # Set default data directory if not provided
+    if args.data_dir is None:
+        current_dir = Path(__file__).parent
+        data_dir = current_dir.parent.parent / "data"
+    else:
+        data_dir = Path(args.data_dir)
+    
+    # Get available models
+    available_models = get_available_models(data_dir)
+    
+    if args.list_models:
+        print(f"Available models in {data_dir}:")
+        if available_models:
+            for i, model in enumerate(available_models, 1):
+                print(f"  {i}. {model}")
+        else:
+            print("  No models found!")
+        return
+    
+    if not available_models:
+        print(f"No models found in data directory: {data_dir}")
+        return
+    
+    # Run the ArUco detection with mesh overlay
+    detect_aruco_with_mesh_overlay(model_name=args.model, data_dir=data_dir)
+
 if __name__ == "__main__":
-    detect_aruco_with_mesh_overlay()
+    main()
