@@ -15,7 +15,7 @@ from scipy.spatial.transform import Rotation as R
 MAX_MOVEMENT_THRESHOLD = 0.05  # meters - maximum allowed movement between frames
 HOLD_REQUIRED_FRAMES = 2       # frames - required stable detections before confirmation
 GHOST_TRACKING_FRAMES = 15     # frames - continue tracking when marker lost
-BLEND_FACTOR = 0.99            # 0.0-1.0 - trust in measurements vs predictions
+BLEND_FACTOR = 0.5           # 0.0-1.0 - trust in measurements vs predictions
 
 # Kalman filter noise parameters
 PROCESS_NOISE_POSITION = 1e-4   # Process noise for position (x,y,z)
