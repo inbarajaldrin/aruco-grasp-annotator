@@ -220,7 +220,7 @@ def estimate_object_pose_from_marker(marker_pose, aruco_annotation):
     
     # Coordinate system transformation matrix
     coord_transform = np.array([
-        [1,  0,  0],  # X-axis
+        [-1,  0,  0],  # X-axis: flip (3D graphics X-right → OpenCV X-left)
         [0,   1,  0],  # Y-axis
         [0,   0, -1]   # Z-axis: flip (3D graphics Z-forward → OpenCV Z-backward)
     ])
