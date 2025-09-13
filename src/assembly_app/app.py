@@ -521,6 +521,18 @@ async def read_root():
                 </div>
                 
                 <div class="controls-panel">
+                    <h3>Assembly Management</h3>
+                    <div class="assembly-controls">
+                        <input type="file" id="assemblyFileInput" accept=".json" style="display: none;" onchange="loadAssemblyFromFile(event)">
+                        <button class="btn" onclick="document.getElementById('assemblyFileInput').click()">Load Assembly</button>
+                        <button class="btn" onclick="exportAssembly()">Export Assembly</button>
+                    </div>
+                    <div style="font-size: 12px; color: #666; margin-top: 8px;">
+                        Load previously saved assembly configurations
+                    </div>
+                </div>
+                
+                <div class="controls-panel">
                     <h3>Scene Objects</h3>
                     <div id="sceneObjects" class="scene-objects">
                         <div class="loading" style="padding: 15px; font-size: 12px;">No objects in scene</div>
@@ -551,6 +563,7 @@ async def read_root():
                 <button class="btn btn-small" onclick="toggleGrid()">Toggle Grid</button>
                 <button class="btn btn-small" onclick="resetCamera()">Reset Camera</button>
                 <button class="btn btn-small" onclick="exportAssembly()">Export Assembly</button>
+                <button class="btn btn-small" onclick="document.getElementById('assemblyFileInput').click()">Load Assembly</button>
                 <button class="btn btn-small btn-secondary" onclick="hideFloatingControls()">Close</button>
             </div>
         </div>
@@ -1122,6 +1135,9 @@ async def read_root():
             async function exportAssembly() {
                 const assembly = {
                     timestamp: new Date().toISOString(),
+                    export_type: "assembly_with_relative_positions",
+                    coordinate_system: "Z-up",
+                    total_components: sceneObjects.length,
                     components: sceneObjects.map(obj => ({
                         name: obj.userData.name,
                         displayName: obj.userData.displayName,
@@ -1138,7 +1154,9 @@ async def read_root():
                             z: obj.rotation.z
                         },
                         parentId: obj.userData.parentId || null
-                    }))
+                    })),
+                    relative_positions: calculateRelativePositions(),
+                    distance_matrix: calculateDistanceMatrix()
                 };
                 
                 const blob = new Blob([JSON.stringify(assembly, null, 2)], { type: 'application/json' });
@@ -1153,6 +1171,183 @@ async def read_root():
                 
                 showMessage("Assembly exported successfully!", "success");
                 updateStatus("Assembly exported to downloads");
+            }
+            
+            function calculateRelativePositions() {
+                const relativePositions = {};
+                
+                for (let i = 0; i < sceneObjects.length; i++) {
+                    const obj1 = sceneObjects[i];
+                    const obj1Name = obj1.userData.name;
+                    relativePositions[obj1Name] = {};
+                    
+                    for (let j = 0; j < sceneObjects.length; j++) {
+                        if (i !== j) {
+                            const obj2 = sceneObjects[j];
+                            const obj2Name = obj2.userData.name;
+                            
+                            // Calculate relative position (obj2 position relative to obj1 center)
+                            const relativePos = {
+                                x: obj2.position.x - obj1.position.x,
+                                y: obj2.position.y - obj1.position.y,
+                                z: obj2.position.z - obj1.position.z
+                            };
+                            
+                            relativePositions[obj1Name][obj2Name] = {
+                                relative_position: relativePos,
+                                distance: Math.sqrt(
+                                    relativePos.x * relativePos.x + 
+                                    relativePos.y * relativePos.y + 
+                                    relativePos.z * relativePos.z
+                                )
+                            };
+                        }
+                    }
+                }
+                
+                return relativePositions;
+            }
+            
+            function calculateDistanceMatrix() {
+                const distanceMatrix = {};
+                
+                for (let i = 0; i < sceneObjects.length; i++) {
+                    const obj1 = sceneObjects[i];
+                    const obj1Name = obj1.userData.name;
+                    distanceMatrix[obj1Name] = {};
+                    
+                    for (let j = 0; j < sceneObjects.length; j++) {
+                        const obj2 = sceneObjects[j];
+                        const obj2Name = obj2.userData.name;
+                        
+                        if (i === j) {
+                            distanceMatrix[obj1Name][obj2Name] = 0;
+                        } else {
+                            const dx = obj2.position.x - obj1.position.x;
+                            const dy = obj2.position.y - obj1.position.y;
+                            const dz = obj2.position.z - obj1.position.z;
+                            const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+                            distanceMatrix[obj1Name][obj2Name] = distance;
+                        }
+                    }
+                }
+                
+                return distanceMatrix;
+            }
+            
+            async function loadAssemblyFromFile(event) {
+                const file = event.target.files[0];
+                if (!file) return;
+                
+                try {
+                    updateStatus("Loading assembly from file...");
+                    showMessage("Reading assembly file...", "info");
+                    
+                    const text = await file.text();
+                    const assemblyData = JSON.parse(text);
+                    
+                    // Validate assembly data structure
+                    if (!assemblyData.components || !Array.isArray(assemblyData.components)) {
+                        throw new Error("Invalid assembly file format - missing components array");
+                    }
+                    
+                    // Clear current scene
+                    clearScene();
+                    
+                    // Load components first if not already loaded
+                    if (Object.keys(loadedComponents).length === 0) {
+                        await loadAllComponents();
+                    }
+                    
+                    // Restore assembly components
+                    let loadedCount = 0;
+                    for (const componentData of assemblyData.components) {
+                        if (componentData.type === 'component') {
+                            await restoreComponentFromAssembly(componentData);
+                            loadedCount++;
+                        }
+                    }
+                    
+                    updateSceneObjectsList();
+                    updateStatusBar();
+                    showMessage(`Successfully loaded assembly with ${loadedCount} components!`, "success");
+                    updateStatus(`Assembly loaded: ${loadedCount} components restored`);
+                    
+                } catch (error) {
+                    showMessage(`Error loading assembly: ${error.message}`, "error");
+                    updateStatus("Error loading assembly file");
+                    console.error("Assembly loading error:", error);
+                }
+                
+                // Reset file input
+                event.target.value = '';
+            }
+            
+            async function restoreComponentFromAssembly(componentData) {
+                const componentName = componentData.name;
+                const component = loadedComponents[componentName];
+                
+                if (!component) {
+                    console.warn(`Component ${componentName} not found in loaded components`);
+                    return;
+                }
+                
+                // Create wireframe geometry (same as addComponentToScene)
+                const geometry = new THREE.BufferGeometry();
+                const vertices = new Float32Array(component.wireframe.vertices.flat());
+                geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+                
+                // Create edges
+                const edges = component.wireframe.edges;
+                const lineGeometry = new THREE.BufferGeometry();
+                const lineVertices = [];
+                
+                edges.forEach(edge => {
+                    const v1 = component.wireframe.vertices[edge[0]];
+                    const v2 = component.wireframe.vertices[edge[1]];
+                    lineVertices.push(...v1, ...v2);
+                });
+                
+                lineGeometry.setAttribute('position', new THREE.Float32BufferAttribute(lineVertices, 3));
+                
+                // Create material
+                const material = new THREE.LineBasicMaterial({ 
+                    color: getComponentColor(componentName),
+                    linewidth: 2
+                });
+                
+                // Create mesh
+                const wireframe = new THREE.LineSegments(lineGeometry, material);
+                wireframe.userData = { 
+                    name: componentName, 
+                    type: 'component',
+                    displayName: component.display_name,
+                    originalColor: getComponentColor(componentName),
+                    id: componentData.id || generateId()
+                };
+                
+                // Restore position and rotation from assembly data
+                wireframe.position.set(
+                    componentData.position.x,
+                    componentData.position.y,
+                    componentData.position.z
+                );
+                
+                wireframe.rotation.set(
+                    componentData.rotation.x,
+                    componentData.rotation.y,
+                    componentData.rotation.z
+                );
+                
+                scene.add(wireframe);
+                sceneObjects.push(wireframe);
+                
+                // Add ArUco markers if available
+                if (component.aruco && component.aruco.markers) {
+                    component.aruco.markers.forEach((marker, index) => {
+                        addArUcoMarker(marker, wireframe, index);
+                    });
+                }
             }
             
             function showFloatingControls() {
