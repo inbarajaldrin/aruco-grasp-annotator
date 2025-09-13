@@ -14,18 +14,12 @@ An interactive web-based 3D assembly application for loading and assembling ArUc
 
 ## Quick Start
 
-1. **Install Dependencies**:
+1. **Run the Application**:
    ```bash
-   cd src/assembly_app
-   pip install -r requirements.txt
+   uv run python src/assembly_app/app.py
    ```
 
-2. **Run the Application**:
-   ```bash
-   python app.py
-   ```
-
-3. **Open in Browser**:
+2. **Open in Browser**:
    Navigate to `http://localhost:8001`
 
 ## Usage

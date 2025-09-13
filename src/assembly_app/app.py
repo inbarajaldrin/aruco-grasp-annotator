@@ -77,13 +77,15 @@ async def read_root():
             }
             
             .sidebar {
-                width: 350px;
+                width: 400px;
                 background: rgba(255, 255, 255, 0.95);
                 backdrop-filter: blur(10px);
                 padding: 20px;
                 overflow-y: auto;
                 box-shadow: 2px 0 10px rgba(0,0,0,0.1);
                 border-right: 1px solid #ddd;
+                z-index: 10;
+                position: relative;
             }
             
             .main-viewer {
@@ -238,6 +240,7 @@ async def read_root():
                 align-items: center;
                 margin-bottom: 8px;
                 gap: 8px;
+                min-width: 0;
             }
             
             .control-label {
@@ -265,6 +268,7 @@ async def read_root():
             .control-buttons {
                 display: flex;
                 gap: 4px;
+                flex-shrink: 0;
             }
             
             .selected-object {
@@ -573,8 +577,8 @@ async def read_root():
                 scene.background = new THREE.Color(0x1a1a1a);
                 
                 // Camera setup
-                camera = new THREE.PerspectiveCamera(75, container.clientWidth / container.clientHeight, 0.1, 1000);
-                camera.position.set(8, 8, 8);
+                camera = new THREE.PerspectiveCamera(75, container.clientWidth / container.clientHeight, 0.001, 1000);
+                camera.position.set(0.5, 0.5, 0.5);
                 camera.lookAt(0, 0, 0);
                 
                 // Renderer setup
@@ -588,8 +592,8 @@ async def read_root():
                 controls = new THREE.OrbitControls(camera, renderer.domElement);
                 controls.enableDamping = true;
                 controls.dampingFactor = 0.05;
-                controls.minDistance = 2;
-                controls.maxDistance = 50;
+                controls.minDistance = 0.05;
+                controls.maxDistance = 5;
                 
                 // Lighting
                 const ambientLight = new THREE.AmbientLight(0x404040, 0.4);
@@ -606,10 +610,10 @@ async def read_root():
                 scene.add(hemisphereLight);
                 
                 // Grid and axes
-                gridHelper = new THREE.GridHelper(20, 20, 0x444444, 0x222222);
+                gridHelper = new THREE.GridHelper(1, 1, 0x444444, 0x222222);
                 scene.add(gridHelper);
                 
-                axesHelper = new THREE.AxesHelper(2);
+                axesHelper = new THREE.AxesHelper(0.2);
                 scene.add(axesHelper);
                 
                 // Raycaster for object selection
@@ -928,32 +932,32 @@ async def read_root():
                         </div>
                         
                         <div class="control-group">
-                            <h4>Rotation (radians)</h4>
+                            <h4>Rotation (degrees)</h4>
                             <div class="control-row">
                                 <span class="control-label">X:</span>
-                                <input type="number" class="control-input" step="0.1" value="${rot.x.toFixed(3)}" 
-                                       onchange="setObjectRotation('x', this.value)">
+                                <input type="number" class="control-input" step="5" value="${(rot.x * 180 / Math.PI).toFixed(1)}" 
+                                       onchange="setObjectRotation('x', this.value * Math.PI / 180)">
                                 <div class="control-buttons">
-                                    <button class="btn btn-small axis-btn x" onclick="rotateObject('x', -0.1)">-</button>
-                                    <button class="btn btn-small axis-btn x" onclick="rotateObject('x', 0.1)">+</button>
+                                    <button class="btn btn-small axis-btn x" onclick="rotateObject('x', -Math.PI / 36)">-</button>
+                                    <button class="btn btn-small axis-btn x" onclick="rotateObject('x', Math.PI / 36)">+</button>
                                 </div>
                             </div>
                             <div class="control-row">
                                 <span class="control-label">Y:</span>
-                                <input type="number" class="control-input" step="0.1" value="${rot.y.toFixed(3)}" 
-                                       onchange="setObjectRotation('y', this.value)">
+                                <input type="number" class="control-input" step="5" value="${(rot.y * 180 / Math.PI).toFixed(1)}" 
+                                       onchange="setObjectRotation('y', this.value * Math.PI / 180)">
                                 <div class="control-buttons">
-                                    <button class="btn btn-small axis-btn y" onclick="rotateObject('y', -0.1)">-</button>
-                                    <button class="btn btn-small axis-btn y" onclick="rotateObject('y', 0.1)">+</button>
+                                    <button class="btn btn-small axis-btn y" onclick="rotateObject('y', -Math.PI / 36)">-</button>
+                                    <button class="btn btn-small axis-btn y" onclick="rotateObject('y', Math.PI / 36)">+</button>
                                 </div>
                             </div>
                             <div class="control-row">
                                 <span class="control-label">Z:</span>
-                                <input type="number" class="control-input" step="0.1" value="${rot.z.toFixed(3)}" 
-                                       onchange="setObjectRotation('z', this.value)">
+                                <input type="number" class="control-input" step="5" value="${(rot.z * 180 / Math.PI).toFixed(1)}" 
+                                       onchange="setObjectRotation('z', this.value * Math.PI / 180)">
                                 <div class="control-buttons">
-                                    <button class="btn btn-small axis-btn z" onclick="rotateObject('z', -0.1)">-</button>
-                                    <button class="btn btn-small axis-btn z" onclick="rotateObject('z', 0.1)">+</button>
+                                    <button class="btn btn-small axis-btn z" onclick="rotateObject('z', -Math.PI / 36)">-</button>
+                                    <button class="btn btn-small axis-btn z" onclick="rotateObject('z', Math.PI / 36)">+</button>
                                 </div>
                             </div>
                         </div>
@@ -1014,7 +1018,7 @@ async def read_root():
             function setObjectRotation(axis, value) {
                 if (!selectedObject) return;
                 selectedObject.rotation[axis] = parseFloat(value);
-                updateStatus(`Rotated ${selectedObject.userData.displayName} ${axis.toUpperCase()}: ${value}`);
+                updateStatus(`Rotated ${selectedObject.userData.displayName} ${axis.toUpperCase()}: ${(value * 180 / Math.PI).toFixed(1)}°`);
             }
             
             function moveObject(axis, delta) {
@@ -1028,7 +1032,7 @@ async def read_root():
                 if (!selectedObject) return;
                 selectedObject.rotation[axis] += delta;
                 updateSelectedObjectInfo();
-                updateStatus(`Rotated ${selectedObject.userData.displayName} ${axis.toUpperCase()}: ${selectedObject.rotation[axis].toFixed(3)}`);
+                updateStatus(`Rotated ${selectedObject.userData.displayName} ${axis.toUpperCase()}: ${(selectedObject.rotation[axis] * 180 / Math.PI).toFixed(1)}°`);
             }
             
             function resetObjectPosition() {
@@ -1106,7 +1110,7 @@ async def read_root():
             }
             
             function resetCamera() {
-                camera.position.set(8, 8, 8);
+                camera.position.set(0.5, 0.5, 0.5);
                 camera.lookAt(0, 0, 0);
                 controls.reset();
                 updateStatus("Camera reset to default position");
