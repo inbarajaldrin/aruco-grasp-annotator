@@ -578,7 +578,8 @@ async def read_root():
                 
                 // Camera setup
                 camera = new THREE.PerspectiveCamera(75, container.clientWidth / container.clientHeight, 0.001, 1000);
-                camera.position.set(0.5, 0.5, 0.5);
+                camera.position.set(0.5, -0.5, 0.5);  // Move camera to look at scene from Y-negative
+                camera.up.set(0, 0, 1);  // Set Z as up vector
                 camera.lookAt(0, 0, 0);
                 
                 // Renderer setup
@@ -600,7 +601,7 @@ async def read_root():
                 scene.add(ambientLight);
                 
                 const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-                directionalLight.position.set(10, 10, 5);
+                directionalLight.position.set(5, -10, 10);  // Light from above in Z-up system
                 directionalLight.castShadow = true;
                 directionalLight.shadow.mapSize.width = 2048;
                 directionalLight.shadow.mapSize.height = 2048;
@@ -611,6 +612,7 @@ async def read_root():
                 
                 // Grid and axes
                 gridHelper = new THREE.GridHelper(1, 1, 0x444444, 0x222222);
+                gridHelper.rotateX(Math.PI / 2);  // Rotate 90 degrees to make it horizontal in XY plane
                 scene.add(gridHelper);
                 
                 axesHelper = new THREE.AxesHelper(0.2);
@@ -682,16 +684,16 @@ async def read_root():
                         selectedObject.position.x += step;
                         break;
                     case 'ArrowUp':
-                        selectedObject.position.z -= step;
+                        selectedObject.position.y += step;  // Changed from z to y
                         break;
                     case 'ArrowDown':
-                        selectedObject.position.z += step;
+                        selectedObject.position.y -= step;  // Changed from z to y
                         break;
                     case 'PageUp':
-                        selectedObject.position.y += step;
+                        selectedObject.position.z += step;  // Now Z moves up/down
                         break;
                     case 'PageDown':
-                        selectedObject.position.y -= step;
+                        selectedObject.position.z -= step;  // Now Z moves up/down
                         break;
                     case 'q':
                     case 'Q':
@@ -921,7 +923,7 @@ async def read_root():
                                 </div>
                             </div>
                             <div class="control-row">
-                                <span class="control-label">Z:</span>
+                                <span class="control-label">Z (Up):</span>  <!-- Added "(Up)" to clarify this is vertical -->
                                 <input type="number" class="control-input" step="0.01" value="${pos.z.toFixed(3)}" 
                                        onchange="setObjectPosition('z', this.value)">
                                 <div class="control-buttons">
@@ -1110,7 +1112,8 @@ async def read_root():
             }
             
             function resetCamera() {
-                camera.position.set(0.5, 0.5, 0.5);
+                camera.position.set(0.5, -0.5, 0.5);  // Updated position
+                camera.up.set(0, 0, 1);  // Ensure Z is still up
                 camera.lookAt(0, 0, 0);
                 controls.reset();
                 updateStatus("Camera reset to default position");
