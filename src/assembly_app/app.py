@@ -842,7 +842,7 @@ async def read_root():
                 
                 // Apply rotation - convert from roll/pitch/yaw to Three.js Euler angles
                 const rot = markerData.pose_absolute.rotation;
-                marker.rotation.set(rot.roll, rot.yaw, rot.pitch);
+                marker.rotation.set(rot.roll, rot.pitch, rot.yaw);
                 
                 marker.userData = { 
                     name: `ArUco-${markerData.aruco_id}`, 
