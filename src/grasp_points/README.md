@@ -53,9 +53,27 @@ All files saved in `outputs/` folder:
 ✅ All coordinates relative to ArUco marker  
 ✅ Works with any marker orientation  
 
+## Transform Grasp Points to All Markers
+
+After generating grasp points for one marker, transform them to all markers:
+
+```bash
+# Auto-detects object thickness from ArUco annotations
+python annotate_grasp_to_all_markers.py --object fork_orange_scaled70 --source-marker-id 5
+
+# Or manually specify thickness (in meters)
+python annotate_grasp_to_all_markers.py --object fork_orange_scaled70 --source-marker-id 5 --object-thickness 0.021
+```
+
+This creates a comprehensive JSON file in `../../data/grasp/` with:
+- Wireframe data
+- All ArUco markers
+- Grasp points relative to each marker
+
 ## Files
 
 - `cad_to_grasp_pipeline.py` - Main script (run this)
+- `annotate_grasp_to_all_markers.py` - Transform to all markers
 - `cad_to_image_renderer.py` - Orthographic rendering
 - `point_mapper_2d_to_3d.py` - 2D to 3D mapping
 - `adaptive_region_center_points.py` - Region detection algorithm

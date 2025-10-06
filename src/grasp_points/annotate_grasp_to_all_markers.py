@@ -105,14 +105,14 @@ def adjust_z_to_center(grasp_points, object_thickness):
 
 
 def annotate_grasp_points_to_all_markers(object_name, source_marker_id, 
-                                         object_thickness, data_dir="../../data"):
+                                         object_thickness=None, data_dir="../../data"):
     """
     Main function to annotate grasp points relative to all markers.
     
     Args:
         object_name: Name of the object (e.g., "fork_orange_scaled70")
         source_marker_id: Marker ID used to generate the grasp points
-        object_thickness: Thickness of the object (for Z adjustment)
+        object_thickness: Thickness of the object (for Z adjustment). If None, auto-detect from ArUco annotations.
         data_dir: Path to data directory
     """
     data_path = Path(data_dir)
@@ -142,9 +142,18 @@ def annotate_grasp_points_to_all_markers(object_name, source_marker_id,
     if source_marker is None:
         raise ValueError(f"Source marker {source_marker_id} not found")
     
+    # Auto-detect object thickness if not provided
+    if object_thickness is None:
+        if 'cad_object_info' in source_marker and 'dimensions' in source_marker['cad_object_info']:
+            # Use height as thickness (assumes object is oriented with thickness in Z)
+            object_thickness = source_marker['cad_object_info']['dimensions']['height']
+            print(f"\n✓ Auto-detected object thickness from ArUco annotations: {object_thickness} m")
+        else:
+            raise ValueError("Object thickness not provided and could not be auto-detected from ArUco annotations")
+    
     print(f"\nSource marker {source_marker_id} found")
     print(f"Grasp points from source: {len(grasp_data['grasp_points'])}")
-    print(f"Object thickness: {object_thickness}")
+    print(f"Object thickness: {object_thickness} m")
     
     # Adjust Z-coordinates to center of object
     print("\nAdjusting Z-coordinates to object center...")
@@ -257,8 +266,9 @@ def main():
     parser.add_argument(
         '--object-thickness',
         type=float,
-        required=True,
-        help='Thickness of the object for Z-coordinate adjustment'
+        required=False,
+        default=None,
+        help='Thickness of the object for Z-coordinate adjustment (auto-detects from ArUco annotations if not provided)'
     )
     parser.add_argument(
         '--data-dir',
