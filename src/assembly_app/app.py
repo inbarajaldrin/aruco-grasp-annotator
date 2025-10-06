@@ -533,6 +533,18 @@ async def read_root():
                 </div>
                 
                 <div class="controls-panel">
+                    <h3>🎯 Grasp Points Visualization</h3>
+                    <div class="assembly-controls">
+                        <input type="file" id="graspFileInput" accept=".json" style="display: none;" onchange="loadGraspPoints(event)">
+                        <button class="btn" onclick="document.getElementById('graspFileInput').click()">Load Grasp Points</button>
+                        <button class="btn btn-secondary" onclick="clearGraspPoints()">Clear Grasp Points</button>
+                    </div>
+                    <div id="graspInfo" style="font-size: 12px; color: #666; margin-top: 8px;">
+                        No grasp points loaded
+                    </div>
+                </div>
+                
+                <div class="controls-panel">
                     <h3>Scene Objects</h3>
                     <div id="sceneObjects" class="scene-objects">
                         <div class="loading" style="padding: 15px; font-size: 12px;">No objects in scene</div>
@@ -580,6 +592,8 @@ async def read_root():
             let gridHelper, axesHelper;
             let raycaster, mouse;
             let isMouseDown = false;
+            let graspPointsGroup = null;
+            let graspPointsData = null;
             
             // Initialize the 3D scene
             function initScene() {
@@ -1379,6 +1393,230 @@ async def read_root():
                         div.parentNode.removeChild(div);
                     }
                 }, 4000);
+            }
+            
+            // Grasp Points Visualization Functions
+            async function loadGraspPoints(event) {
+                const file = event.target.files[0];
+                if (!file) return;
+                
+                try {
+                    updateStatus("Loading grasp points...");
+                    showMessage("Reading grasp points file...", "info");
+                    
+                    const text = await file.text();
+                    const tempData = JSON.parse(text);
+                    
+                    // Validate grasp points data
+                    if (!tempData.markers || !Array.isArray(tempData.markers)) {
+                        throw new Error("Invalid grasp points file - missing markers array");
+                    }
+                    
+                    if (!tempData.wireframe || !tempData.wireframe.vertices || !tempData.wireframe.edges) {
+                        throw new Error("Invalid grasp points file - missing wireframe data");
+                    }
+                    
+                    // Clear previous grasp points
+                    clearGraspPoints();
+                    
+                    // Now set the validated data
+                    graspPointsData = tempData;
+                    
+                    // Create group for everything (wireframe, markers, grasp points)
+                    graspPointsGroup = new THREE.Group();
+                    graspPointsGroup.name = "GraspVisualization";
+                    
+                    // 1. Create wireframe
+                    const wireframe = createWireframeFromData(graspPointsData);
+                    graspPointsGroup.add(wireframe);
+                    
+                    // 2. Add ArUco markers
+                    graspPointsData.markers.forEach(markerData => {
+                        const markerMesh = createMarkerMesh(markerData);
+                        graspPointsGroup.add(markerMesh);
+                    });
+                    
+                    // 3. Add grasp points (only from one marker to avoid duplication)
+                    // We'll use the source marker's grasp points
+                    const sourceMarker = graspPointsData.markers.find(
+                        m => m.aruco_id === graspPointsData.source_marker_id
+                    ) || graspPointsData.markers[0];
+                    
+                    let totalPoints = 0;
+                    sourceMarker.grasp_points.forEach((graspPoint, idx) => {
+                        const sphere = createGraspPointSphere(graspPoint, sourceMarker.aruco_id, idx);
+                        graspPointsGroup.add(sphere);
+                        totalPoints++;
+                    });
+                    
+                    scene.add(graspPointsGroup);
+                    
+                    // Update info
+                    const infoText = `Loaded ${graspPointsData.display_name}: ${totalPoints} grasp points, ${graspPointsData.markers.length} markers`;
+                    document.getElementById('graspInfo').innerHTML = `
+                        <span style="color: #27ae60; font-weight: 500;">${infoText}</span>
+                    `;
+                    
+                    showMessage(infoText, "success");
+                    updateStatus(`Grasp visualization loaded`);
+                    
+                    // Auto-select the wireframe
+                    selectObject(wireframe);
+                    
+                } catch (error) {
+                    showMessage(`Error loading grasp points: ${error.message}`, "error");
+                    updateStatus("Error loading grasp points");
+                    console.error("Grasp points loading error:", error);
+                }
+                
+                // Reset file input
+                event.target.value = '';
+            }
+            
+            function createWireframeFromData(data) {
+                const vertices = data.wireframe.vertices;
+                const edges = data.wireframe.edges;
+                
+                const lineVertices = [];
+                edges.forEach(edge => {
+                    const v1 = vertices[edge[0]];
+                    const v2 = vertices[edge[1]];
+                    lineVertices.push(...v1, ...v2);
+                });
+                
+                const geometry = new THREE.BufferGeometry();
+                geometry.setAttribute('position', new THREE.Float32BufferAttribute(lineVertices, 3));
+                
+                const material = new THREE.LineBasicMaterial({ 
+                    color: 0x4a90e2,
+                    linewidth: 2
+                });
+                
+                const wireframe = new THREE.LineSegments(geometry, material);
+                wireframe.userData = { 
+                    name: data.object_name,
+                    type: 'grasp_wireframe',
+                    displayName: data.display_name,
+                    originalColor: 0x4a90e2,
+                    id: generateId()
+                };
+                
+                // Center the wireframe
+                wireframe.position.set(0, 0, 0);
+                sceneObjects.push(wireframe);
+                
+                return wireframe;
+            }
+            
+            function createMarkerMesh(markerData) {
+                const size = markerData.size;
+                const geometry = new THREE.BoxGeometry(size, size, size * 0.1);
+                const material = new THREE.MeshBasicMaterial({ 
+                    color: 0xff6b6b,
+                    transparent: true,
+                    opacity: 0.7
+                });
+                
+                const marker = new THREE.Mesh(geometry, material);
+                
+                const pos = markerData.pose_absolute.position;
+                marker.position.set(pos.x, pos.y, pos.z);
+                
+                const rot = markerData.pose_absolute.rotation;
+                marker.rotation.set(rot.roll, rot.pitch, rot.yaw);
+                
+                marker.userData = { 
+                    name: `ArUco-${markerData.aruco_id}`,
+                    type: 'grasp_marker',
+                    arucoId: markerData.aruco_id,
+                    displayName: `ArUco ${markerData.aruco_id}`,
+                    originalColor: 0xff6b6b,
+                    id: generateId()
+                };
+                
+                sceneObjects.push(marker);
+                return marker;
+            }
+            
+            function createGraspPointSphere(graspPoint, markerId, index) {
+                // Create sphere geometry for grasp point
+                // Note: All coordinates are in meters (matching wireframe/ArUco units)
+                const geometry = new THREE.SphereGeometry(0.003, 16, 16);  // 0.003 m = 3mm
+                const material = new THREE.MeshPhongMaterial({
+                    color: 0x00ff00,  // Green for grasp points
+                    emissive: 0x00ff00,
+                    emissiveIntensity: 0.5,
+                    transparent: true,
+                    opacity: 0.9
+                });
+                
+                const sphere = new THREE.Mesh(geometry, material);
+                
+                // Set position from grasp point data (in meters)
+                const pos = graspPoint.position;
+                sphere.position.set(pos.x, pos.y, pos.z);
+                
+                // Store metadata
+                sphere.userData = {
+                    name: `Grasp-${markerId}-${graspPoint.id}`,
+                    type: 'grasp_point',
+                    markerId: markerId,
+                    graspId: graspPoint.id,
+                    displayName: `Grasp Point ${graspPoint.id} (Marker ${markerId})`,
+                    originalColor: 0x00ff00,
+                    id: generateId()
+                };
+                
+                // Add approach vector visualization (small arrow)
+                if (graspPoint.approach_vector) {
+                    const direction = new THREE.Vector3(
+                        graspPoint.approach_vector.x,
+                        graspPoint.approach_vector.y,
+                        graspPoint.approach_vector.z
+                    ).normalize();
+                    
+                    const arrowHelper = new THREE.ArrowHelper(
+                        direction,
+                        new THREE.Vector3(0, 0, 0),  // Origin relative to sphere
+                        0.01,  // Arrow length in meters (1cm)
+                        0xffff00,  // Yellow arrow color for better visibility
+                        0.003,  // Head length
+                        0.002   // Head width
+                    );
+                    sphere.add(arrowHelper);
+                }
+                
+                return sphere;
+            }
+            
+            function clearGraspPoints() {
+                if (graspPointsGroup) {
+                    // Remove all objects from the grasp group from sceneObjects
+                    graspPointsGroup.traverse((child) => {
+                        const index = sceneObjects.indexOf(child);
+                        if (index > -1) {
+                            sceneObjects.splice(index, 1);
+                        }
+                    });
+                    
+                    scene.remove(graspPointsGroup);
+                    graspPointsGroup = null;
+                }
+                graspPointsData = null;
+                
+                // Deselect if a grasp object was selected
+                if (selectedObject && (
+                    selectedObject.userData.type === 'grasp_wireframe' ||
+                    selectedObject.userData.type === 'grasp_marker' ||
+                    selectedObject.userData.type === 'grasp_point'
+                )) {
+                    selectedObject = null;
+                }
+                
+                updateSceneObjectsList();
+                document.getElementById('graspInfo').innerHTML = 'No grasp points loaded';
+                updateStatus("Grasp points cleared");
+                showMessage("Grasp points visualization cleared", "info");
             }
             
             // Initialize when page loads

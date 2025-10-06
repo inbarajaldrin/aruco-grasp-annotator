@@ -29,6 +29,8 @@ dependencies = [
     "python-json-logger>=2.0.0",
     "opencv-contrib-python>=4.11.0.86",
     "reportlab>=4.0.0",
+    "fastapi>=0.118.0",
+    "uvicorn>=0.37.0",
 ]
 
 [project.optional-dependencies]
