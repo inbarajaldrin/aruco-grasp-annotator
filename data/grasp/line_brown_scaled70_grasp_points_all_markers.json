@@ -1,9 +1,26 @@
 {
   "object_name": "line_brown_scaled70",
   "display_name": "Line Brown Scaled70",
-  "source_marker_id": 20,
+  "source_marker_id": 22,
   "object_thickness": 0.025899999141693116,
   "total_grasp_points": 1,
+  "coordinate_frame": "cad_center",
+  "grasp_points": [
+    {
+      "id": 1,
+      "position": {
+        "x": -0.00010623046522960067,
+        "y": 0.00010623046522960224,
+        "z": 0.0
+      },
+      "type": "center_point",
+      "approach_vector": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 1.0
+      }
+    }
+  ],
   "wireframe": {
     "vertices": [
       [
@@ -400,23 +417,7 @@
           "pitch": 1.5707963267948966,
           "yaw": 0.0
         }
-      },
-      "grasp_points": [
-        {
-          "id": 1,
-          "position": {
-            "x": 0.00010623046522960093,
-            "y": -0.0005705000042915345,
-            "z": 2.3269530478864774e-05
-          },
-          "type": "center_point",
-          "approach_vector": {
-            "x": 0.0,
-            "y": 0.0,
-            "z": 1.0
-          }
-        }
-      ]
+      }
     },
     {
       "aruco_id": 19,
@@ -432,23 +433,7 @@
           "pitch": -1.5707963267948966,
           "yaw": 0.0
         }
-      },
-      "grasp_points": [
-        {
-          "id": 1,
-          "position": {
-            "x": -0.00010623046522960096,
-            "y": -0.0005705000042915345,
-            "z": 0.00023573046093806636
-          },
-          "type": "center_point",
-          "approach_vector": {
-            "x": 0.0,
-            "y": 0.0,
-            "z": 1.0
-          }
-        }
-      ]
+      }
     },
     {
       "aruco_id": 20,
@@ -464,23 +449,7 @@
           "pitch": 0.0,
           "yaw": 0.0
         }
-      },
-      "grasp_points": [
-        {
-          "id": 1,
-          "position": {
-            "x": -0.00010623046522960079,
-            "y": 0.00010623046522960094,
-            "z": 0.00012949999570846554
-          },
-          "type": "center_point",
-          "approach_vector": {
-            "x": 0.0,
-            "y": 0.0,
-            "z": 1.0
-          }
-        }
-      ]
+      }
     },
     {
       "aruco_id": 21,
@@ -496,23 +465,7 @@
           "pitch": 0.0,
           "yaw": 0.0
         }
-      },
-      "grasp_points": [
-        {
-          "id": 1,
-          "position": {
-            "x": -0.00010623046522960079,
-            "y": -0.00010623046522960119,
-            "z": 0.0012705000042915345
-          },
-          "type": "center_point",
-          "approach_vector": {
-            "x": 0.0,
-            "y": 0.0,
-            "z": 1.0
-          }
-        }
-      ]
+      }
     },
     {
       "aruco_id": 22,
@@ -528,23 +481,7 @@
           "pitch": 0.0,
           "yaw": 0.0
         }
-      },
-      "grasp_points": [
-        {
-          "id": 1,
-          "position": {
-            "x": -0.00010623046522960079,
-            "y": -0.0005705000042915345,
-            "z": 2.326953047886467e-05
-          },
-          "type": "center_point",
-          "approach_vector": {
-            "x": 0.0,
-            "y": 0.0,
-            "z": 1.0
-          }
-        }
-      ]
+      }
     },
     {
       "aruco_id": 23,
@@ -560,23 +497,7 @@
           "pitch": 0.0,
           "yaw": 0.0
         }
-      },
-      "grasp_points": [
-        {
-          "id": 1,
-          "position": {
-            "x": -0.00010623046522960079,
-            "y": 0.0005705000042915345,
-            "z": 0.00023573046093806657
-          },
-          "type": "center_point",
-          "approach_vector": {
-            "x": 0.0,
-            "y": 0.0,
-            "z": 1.0
-          }
-        }
-      ]
+      }
     }
   ]
 }

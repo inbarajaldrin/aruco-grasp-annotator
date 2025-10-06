@@ -1416,6 +1416,10 @@ async def read_root():
                         throw new Error("Invalid grasp points file - missing wireframe data");
                     }
                     
+                    if (!tempData.grasp_points || !Array.isArray(tempData.grasp_points)) {
+                        throw new Error("Invalid grasp points file - missing grasp_points array");
+                    }
+                    
                     // Clear previous grasp points
                     clearGraspPoints();
                     
@@ -1436,15 +1440,11 @@ async def read_root():
                         graspPointsGroup.add(markerMesh);
                     });
                     
-                    // 3. Add grasp points (only from one marker to avoid duplication)
-                    // We'll use the source marker's grasp points
-                    const sourceMarker = graspPointsData.markers.find(
-                        m => m.aruco_id === graspPointsData.source_marker_id
-                    ) || graspPointsData.markers[0];
-                    
+                    // 3. Add grasp points (stored relative to CAD center)
+                    // Grasp points are now stored once relative to CAD center, not per-marker
                     let totalPoints = 0;
-                    sourceMarker.grasp_points.forEach((graspPoint, idx) => {
-                        const sphere = createGraspPointSphere(graspPoint, sourceMarker.aruco_id, idx);
+                    graspPointsData.grasp_points.forEach((graspPoint, idx) => {
+                        const sphere = createGraspPointSphere(graspPoint, idx);
                         graspPointsGroup.add(sphere);
                         totalPoints++;
                     });
@@ -1538,9 +1538,9 @@ async def read_root():
                 return marker;
             }
             
-            function createGraspPointSphere(graspPoint, markerId, index) {
+            function createGraspPointSphere(graspPoint, index) {
                 // Create sphere geometry for grasp point
-                // Note: All coordinates are in meters (matching wireframe/ArUco units)
+                // Note: All coordinates are in meters relative to CAD center
                 const geometry = new THREE.SphereGeometry(0.003, 16, 16);  // 0.003 m = 3mm
                 const material = new THREE.MeshPhongMaterial({
                     color: 0x00ff00,  // Green for grasp points
@@ -1552,17 +1552,17 @@ async def read_root():
                 
                 const sphere = new THREE.Mesh(geometry, material);
                 
-                // Set position from grasp point data (in meters)
+                // Set position from grasp point data (in meters, relative to CAD center)
+                // Coordinate flip already applied during export
                 const pos = graspPoint.position;
                 sphere.position.set(pos.x, pos.y, pos.z);
                 
                 // Store metadata
                 sphere.userData = {
-                    name: `Grasp-${markerId}-${graspPoint.id}`,
+                    name: `Grasp-${graspPoint.id}`,
                     type: 'grasp_point',
-                    markerId: markerId,
                     graspId: graspPoint.id,
-                    displayName: `Grasp Point ${graspPoint.id} (Marker ${markerId})`,
+                    displayName: `Grasp Point ${graspPoint.id}`,
                     originalColor: 0x00ff00,
                     id: generateId()
                 };

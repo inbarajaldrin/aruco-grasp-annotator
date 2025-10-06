@@ -87,18 +87,21 @@ def adjust_z_to_center(grasp_points, object_thickness):
     Adjust Z-coordinate of grasp points to be at the center of the object.
     
     Args:
-        grasp_points: List of grasp point dictionaries
-        object_thickness: Thickness of the object (to divide by 2)
+        grasp_points: List of grasp point dictionaries (in cm)
+        object_thickness: Thickness of the object in meters
     
     Returns:
-        List of adjusted grasp points
+        List of adjusted grasp points (in cm)
     """
     adjusted_points = []
+    # Convert thickness from meters to centimeters
+    thickness_cm = object_thickness * 100.0
+    
     for gp in grasp_points:
         adjusted = gp.copy()
         adjusted['position'] = gp['position'].copy()
-        # Set Z to half the thickness (center of object)
-        adjusted['position']['z'] = object_thickness / 2.0
+        # Set Z to half the thickness in cm (center of object in marker frame)
+        adjusted['position']['z'] = thickness_cm / 2.0
         adjusted_points.append(adjusted)
     
     return adjusted_points
@@ -172,14 +175,47 @@ def annotate_grasp_points_to_all_markers(object_name, source_marker_id,
         ])
         source_points_3d.append(point)
     
-    # Transform grasp points to all markers
-    print("\nTransforming grasp points to all markers...")
+    # Transform grasp points from source marker to CAD center
+    print("\nTransforming grasp points to CAD center...")
+    # Get marker position (in meters)
+    marker_pos = source_marker['pose_relative_to_cad_center']['position']
+    marker_position_m = np.array([marker_pos['x'], marker_pos['y'], marker_pos['z']])
+    
+    grasp_points_in_cad = []
+    for i, point in enumerate(source_points_3d):
+        # Point is in cm relative to marker's local frame (where marker was facing up during detection)
+        # Convert to meters and translate to CAD center
+        # Note: We don't apply the marker's rotation because the grasp detection was done
+        # with the marker facing up (identity orientation), not in its actual CAD orientation
+        # Z is set to 0 (CAD center plane) for all grasp points
+        point_m = point / 100.0
+        
+        grasp_points_in_cad.append({
+            "id": i + 1,
+            "position": {
+                "x": float(point_m[0] + marker_position_m[0]),
+                "y": float(point_m[1] + marker_position_m[1]),
+                "z": 0.0  # CAD center plane (origin)
+            },
+            "type": "center_point",
+            "approach_vector": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 1.0
+            }
+        })
+    
+    print(f"  ✓ Transformed {len(grasp_points_in_cad)} grasp points to CAD center frame")
+    
+    # Create output data structure
     all_markers_grasp_data = {
         "object_name": object_name,
         "display_name": object_name.replace('_', ' ').title(),
         "source_marker_id": source_marker_id,
         "object_thickness": object_thickness,
-        "total_grasp_points": len(source_points_3d),
+        "total_grasp_points": len(grasp_points_in_cad),
+        "coordinate_frame": "cad_center",
+        "grasp_points": grasp_points_in_cad,
         "wireframe": {
             "vertices": wireframe_data['vertices'],
             "edges": wireframe_data['edges'],
@@ -188,32 +224,10 @@ def annotate_grasp_points_to_all_markers(object_name, source_marker_id,
         "markers": []
     }
     
+    # Add marker information (without per-marker grasp points)
     for marker in aruco_data['markers']:
         marker_id = marker['aruco_id']
-        print(f"  Processing marker {marker_id}...")
-        
-        # Transform each grasp point to this marker's frame
-        grasp_points_in_marker = []
-        for i, point in enumerate(source_points_3d):
-            transformed_point = transform_point_between_markers(
-                point, source_marker, marker
-            )
-            
-            # Convert from centimeters to meters to match wireframe/ArUco scale
-            grasp_points_in_marker.append({
-                "id": i + 1,
-                "position": {
-                    "x": float(transformed_point[0] / 100.0),
-                    "y": float(transformed_point[1] / 100.0),
-                    "z": float(transformed_point[2] / 100.0)
-                },
-                "type": "center_point",
-                "approach_vector": {
-                    "x": 0.0,
-                    "y": 0.0,
-                    "z": 1.0
-                }
-            })
+        print(f"  Adding marker {marker_id} info...")
         
         marker_grasp_data = {
             "aruco_id": marker_id,
@@ -221,8 +235,7 @@ def annotate_grasp_points_to_all_markers(object_name, source_marker_id,
             "pose_absolute": {
                 "position": marker['pose_relative_to_cad_center']['position'],
                 "rotation": marker['pose_relative_to_cad_center']['rotation']
-            },
-            "grasp_points": grasp_points_in_marker
+            }
         }
         
         all_markers_grasp_data["markers"].append(marker_grasp_data)
@@ -235,13 +248,14 @@ def annotate_grasp_points_to_all_markers(object_name, source_marker_id,
     with open(output_file, 'w') as f:
         json.dump(all_markers_grasp_data, f, indent=2)
     
-    print(f"\n✓ Saved grasp points for all markers: {output_file}")
+    print(f"\n✓ Saved grasp points: {output_file}")
     print(f"\nSummary:")
     print(f"  Object: {object_name}")
     print(f"  Source marker: {source_marker_id}")
-    print(f"  Total grasp points: {len(source_points_3d)}")
+    print(f"  Total grasp points: {len(grasp_points_in_cad)}")
+    print(f"  Coordinate frame: CAD center (origin)")
     print(f"  Total markers: {len(all_markers_grasp_data['markers'])}")
-    print(f"  Each marker now has {len(source_points_3d)} grasp points in its frame")
+    print(f"  ✓ Grasp points stored relative to CAD center for accurate localization")
     
     return output_file
 

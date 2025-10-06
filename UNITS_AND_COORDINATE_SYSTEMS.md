@@ -137,6 +137,12 @@ When adding new objects or grasp points, verify:
 - Verify the coordinate transformation pipeline
 - Check that the marker frame transformations are correct
 
+### Grasp points appear inverted
+- **Root cause**: Coordinate system mismatch between CAD and Three.js/wireframe
+- **Solution**: Coordinate flip (`-X, -Y, +Z`) is applied during export in `annotate_grasp_to_all_markers.py`
+- The wireframe exporter already applies this flip, so grasp points must match
+- Do NOT apply additional flips in visualization code
+
 ### Markers floating away from the object
 - Verify ArUco annotation positions are in meters
 - Check that the CAD center is correctly calculated

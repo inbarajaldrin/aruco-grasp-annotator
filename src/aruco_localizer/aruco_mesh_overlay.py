@@ -18,6 +18,15 @@ def load_aruco_annotations(json_file):
         data = json.load(f)
     return data['markers']
 
+def load_grasp_points(json_file):
+    """Load grasp points data from JSON file"""
+    try:
+        with open(json_file, 'r') as f:
+            data = json.load(f)
+        return data
+    except FileNotFoundError:
+        return None
+
 def get_available_models(data_dir):
     """Get list of available models from the data directory"""
     wireframe_dir = Path(data_dir) / "wireframe"
@@ -191,7 +200,110 @@ def draw_wireframe(frame, projected_vertices, edges, color=(0, 255, 0), thicknes
     for vertex in valid_vertices:
         cv2.circle(frame, tuple(vertex), 3, (255, 0, 0), -1)
 
-def detect_aruco_with_mesh_overlay(model_name=None, data_dir=None):
+def draw_grasp_points(frame, grasp_data, marker_id, rvec, tvec, camera_matrix, dist_coeffs, marker_annotation):
+    """Draw grasp points using CAD-center-relative coordinates"""
+    if grasp_data is None or 'grasp_points' not in grasp_data:
+        return
+    
+    # Get marker pose
+    rotation_matrix, _ = cv2.Rodrigues(rvec)
+    
+    # Get marker's position relative to CAD center from annotation
+    marker_relative_pose = marker_annotation['pose_relative_to_cad_center']
+    
+    # Coordinate system transformation matrix (same as wireframe)
+    # The ArUco annotator exports data in 3D graphics coordinate system
+    # OpenCV uses a different coordinate system for camera operations
+    # This matrix transforms from 3D graphics to OpenCV convention
+    coord_transform = np.array([
+        [1,  0,  0],  # X-axis: flip (3D graphics X-right → OpenCV X-left)
+        [0,   1,  0],  # Y-axis
+        [0,   0, -1]   # Z-axis: flip (3D graphics Z-forward → OpenCV Z-backward)
+    ])
+    
+    # Apply transformation to marker position (same as wireframe)
+    original_pos = np.array([
+        marker_relative_pose['position']['x'],
+        marker_relative_pose['position']['y'], 
+        marker_relative_pose['position']['z']
+    ])
+    # Apply the same scaling factor to marker position to maintain alignment
+    marker_pos = coord_transform @ (original_pos * 1.25)
+    
+    # Get marker's rotation
+    marker_rot = marker_relative_pose['rotation']
+    marker_rotation_matrix = euler_to_rotation_matrix(
+        marker_rot['roll'], marker_rot['pitch'], marker_rot['yaw']
+    )
+    
+    # Apply coordinate system transformation to the rotation matrix as well (same as wireframe)
+    marker_rotation = coord_transform @ marker_rotation_matrix @ coord_transform.T
+    
+    # Draw each grasp point (stored relative to CAD center with flip already applied)
+    for gp in grasp_data['grasp_points']:
+        # Get grasp point position relative to CAD center (in meters, flip already applied in export)
+        gp_cad = np.array([
+            gp['position']['x'],
+            gp['position']['y'],
+            gp['position']['z']
+        ], dtype=np.float32)
+        
+        # Apply coordinate system transformation and scaling (same as wireframe vertices)
+        gp_cad_transformed = coord_transform @ (gp_cad * 1.25)
+        
+        # Transform from CAD center to marker frame
+        # gp_marker = R_marker^-1 * (gp_cad_transformed - marker_pos)
+        gp_marker = marker_rotation.T @ (gp_cad_transformed - marker_pos)
+        gp_pos = gp_marker.reshape(1, 3)
+        
+        # Project grasp point to image
+        grasp_point_2d, _ = cv2.projectPoints(
+            gp_pos,
+            rvec, tvec,
+            camera_matrix, dist_coeffs
+        )
+        
+        gp_pixel = tuple(grasp_point_2d[0][0].astype(int))
+        
+        # Draw grasp point as a green circle with yellow border
+        cv2.circle(frame, gp_pixel, 8, (0, 255, 0), -1)
+        cv2.circle(frame, gp_pixel, 10, (0, 255, 255), 2)
+        
+        # Draw grasp point ID
+        label = f"G{gp['id']}"
+        cv2.putText(frame, label, 
+                   (gp_pixel[0] + 15, gp_pixel[1] - 10),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
+        
+        # Draw approach vector if available
+        if 'approach_vector' in gp:
+            approach_cad = np.array([
+                gp['approach_vector']['x'],
+                gp['approach_vector']['y'],
+                gp['approach_vector']['z']
+            ], dtype=np.float32)
+            
+            # Apply coordinate system transformation to approach vector (same as wireframe)
+            approach_cad_transformed = coord_transform @ approach_cad
+            
+            # Transform approach vector from CAD center to marker frame
+            approach_marker = marker_rotation.T @ approach_cad_transformed
+            
+            # Scale approach vector for visualization (2cm length)
+            approach_end = gp_pos[0] + (approach_marker * 0.02)
+            
+            approach_2d, _ = cv2.projectPoints(
+                approach_end.reshape(1, 3),
+                rvec, tvec,
+                camera_matrix, dist_coeffs
+            )
+            
+            approach_pixel = tuple(approach_2d[0][0].astype(int))
+            
+            # Draw arrow for approach vector (cyan color)
+            cv2.arrowedLine(frame, gp_pixel, approach_pixel, (255, 255, 0), 2, tipLength=0.3)
+
+def detect_aruco_with_mesh_overlay(model_name=None, camera_id=None, data_dir=None):
     """Detect ArUco marker and overlay mesh wireframe"""
     
     # Set default data directory if not provided
@@ -222,10 +334,12 @@ def detect_aruco_with_mesh_overlay(model_name=None, data_dir=None):
     # Construct file paths
     wireframe_file = data_dir / "wireframe" / f"{model_name}_wireframe.json"
     aruco_annotations_file = data_dir / "aruco" / f"{model_name}_aruco.json"
+    grasp_file = data_dir / "grasp" / f"{model_name}_grasp_points_all_markers.json"
     
     print(f"Using model: {model_name}")
     print(f"Wireframe file: {wireframe_file}")
     print(f"ArUco annotations file: {aruco_annotations_file}")
+    print(f"Grasp points file: {grasp_file}")
     
     # Load wireframe data
     try:
@@ -242,6 +356,13 @@ def detect_aruco_with_mesh_overlay(model_name=None, data_dir=None):
     except Exception as e:
         print(f"Error loading ArUco annotations: {e}")
         return
+    
+    # Load grasp points (optional)
+    grasp_data = load_grasp_points(grasp_file)
+    if grasp_data:
+        print(f"✓ Loaded grasp points: {grasp_data['total_grasp_points']} points for {len(grasp_data['markers'])} markers")
+    else:
+        print("ℹ No grasp points file found (optional)")
     
     # Create a dictionary mapping marker IDs to their annotations
     marker_annotations = {}
@@ -266,11 +387,25 @@ def detect_aruco_with_mesh_overlay(model_name=None, data_dir=None):
     parameters = aruco.DetectorParameters()
     detector = aruco.ArucoDetector(dictionary, parameters)
     
+    # Select camera if not provided
+    if camera_id is None:
+        from camera_streamer import detect_available_cameras, select_camera
+        available_cameras = detect_available_cameras()
+        if not available_cameras:
+            print("No cameras detected!")
+            return
+        camera_id = select_camera(available_cameras)
+        if camera_id is None:
+            print("No camera selected. Exiting.")
+            return
+    
     # Open camera
-    cap = cv2.VideoCapture(8)  # Using camera ID 8
+    cap = cv2.VideoCapture(camera_id)
     if not cap.isOpened():
-        print("Failed to open camera 8")
+        print(f"Failed to open camera {camera_id}")
         return
+    
+    print(f"Using camera {camera_id}")
     
     # Set camera properties
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
@@ -375,6 +510,10 @@ def detect_aruco_with_mesh_overlay(model_name=None, data_dir=None):
                         # Draw wireframe
                         if len(projected_vertices) > 0:
                             draw_wireframe(frame, projected_vertices, edges, color=(0, 255, 0), thickness=2)
+                        
+                        # Draw grasp points if available
+                        if grasp_data:
+                            draw_grasp_points(frame, grasp_data, marker_id, rvec, tvec, camera_matrix, dist_coeffs, marker_annotation)
                     
                     # Display information for this marker
                     # Position text based on marker index to avoid overlap
@@ -425,6 +564,8 @@ def main():
     parser = argparse.ArgumentParser(description="ArUco Mesh Overlay - Detect ArUco markers and overlay 3D wireframes")
     parser.add_argument("--model", "-m", type=str, default=None,
                        help="Model name to use (e.g., 'fork_orange_scaled70'). If not provided, interactive selection will be used.")
+    parser.add_argument("--camera-id", "-c", type=int, default=None,
+                       help="Camera device ID (e.g., 0, 1, 2). If not provided, interactive selection will be used.")
     parser.add_argument("--data-dir", "-d", type=str, default=None,
                        help="Path to data directory containing wireframe and aruco subdirectories")
     parser.add_argument("--list-models", "-l", action="store_true",
@@ -456,7 +597,7 @@ def main():
         return
     
     # Run the ArUco detection with mesh overlay
-    detect_aruco_with_mesh_overlay(model_name=args.model, data_dir=data_dir)
+    detect_aruco_with_mesh_overlay(model_name=args.model, camera_id=args.camera_id, data_dir=data_dir)
 
 if __name__ == "__main__":
     main()
