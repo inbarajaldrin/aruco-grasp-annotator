@@ -242,10 +242,10 @@ def main():
     parser = argparse.ArgumentParser(description="Generate PDF with ArUco markers for printing")
     parser.add_argument("--output", "-o", default=str(default_output), 
                        help=f"Output PDF file path (default: {default_output})")
-    parser.add_argument("--size", "-s", type=float, default=30.0,
-                       help="Marker size in millimeters (default: 30)")
-    parser.add_argument("--border", "-b", type=float, default=20.0,
-                       help="Border width percentage (default: 20)")
+    parser.add_argument("--size", "-s", type=float, default=25.0,
+                       help="Marker size in millimeters (default: 25)")
+    parser.add_argument("--border", "-b", type=float, default=10.0,
+                       help="Border width percentage (default: 10)")
     parser.add_argument("--ids", "-i", nargs="+", type=int, default=[0, 1, 2, 3, 4, 5],
                        help="Marker IDs to generate (default: 0 1 2 3 4 5)")
     parser.add_argument("--dictionary", "-d", default="DICT_4X4_50",
