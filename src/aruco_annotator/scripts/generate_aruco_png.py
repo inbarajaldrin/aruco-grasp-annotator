@@ -81,6 +81,10 @@ class ArUcoPNGGenerator:
         self.border_width_mm = marker_size_mm * (border_width_percent / 100)
         self.pattern_size_mm = marker_size_mm - 2 * self.border_width_mm
         
+        # TODO: Change to conventional approach where pattern_size_mm is the inner pattern area
+        # and white border is added OUTSIDE (not inside) the pattern size
+        # TODO: Export border dimensions as absolute values in meters instead of percentages
+        
         print(f"📏 Marker specifications:")
         print(f"   Total size: {marker_size_mm}mm")
         print(f"   Border width: {border_width_percent}% ({self.border_width_mm:.1f}mm)")

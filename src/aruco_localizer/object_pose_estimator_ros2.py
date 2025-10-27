@@ -325,6 +325,9 @@ class ObjectPoseEstimatorROS2(Node):
                     border_width = total_marker_size * border_percentage
                     marker_size = total_marker_size - 2 * border_width  # Inner pattern area
                     
+                    # TODO: Update this when border convention changes to outside approach
+                    # TODO: Use absolute border values in meters instead of percentages
+                    
                     # Estimate pose with Kalman filtering
                     tvec, rvec, filtered_marker_id, is_confirmed = estimate_pose_with_kalman(
                         frame, [target_corners], [marker_id], self.camera_matrix, self.dist_coeffs,

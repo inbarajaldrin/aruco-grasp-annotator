@@ -126,6 +126,9 @@ class ArUcoMarkerInfo:
         self.size = size
         self.rotation = rotation  # Euler angles in radians
         self.border_width = border_width  # Border width as percentage (0.0 to 0.5)
+        # TODO: Change border_width to store absolute values in meters instead of percentages
+        # TODO: Change to conventional approach where pattern size is inner pattern area
+        # and white border is added OUTSIDE (not inside) the pattern size
         
         # CAD object relative pose information
         self.cad_object_pose = cad_object_pose or {
