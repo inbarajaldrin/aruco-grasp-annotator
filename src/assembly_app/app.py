@@ -1147,6 +1147,11 @@ async def read_root():
             }
             
             async function exportAssembly() {
+                // TODO: Add quaternion representation alongside RPY rotation
+                // Include both rotation formats: {x, y, z} (RPY) and {x, y, z, w} (quaternion)
+                // This will make it easier to work with different coordinate systems
+                // and avoid conversion errors in downstream applications
+                
                 const assembly = {
                     timestamp: new Date().toISOString(),
                     export_type: "assembly_with_relative_positions",
