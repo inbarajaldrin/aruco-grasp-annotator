@@ -519,24 +519,70 @@ async def read_root():
                     id: generateId()
                 };
                 
-                // Add approach vector visualization (small arrow)
+                // Add gripper visualization (parallel-jaw gripper)
+                const gripperGroup = new THREE.Group();
+                
+                // Gripper parameters
+                const gripperWidth = 0.008;      // 8mm - distance between jaws
+                const gripperLength = 0.012;     // 12mm - length of gripper fingers
+                const gripperDepth = 0.004;      // 4mm - depth of gripper fingers
+                const gripperThickness = 0.001;  // 1mm - thickness of each jaw
+                const approachLength = 0.015;    // 15mm - length of approach indicator
+                
+                // Material for gripper
+                const gripperMaterial = new THREE.MeshPhongMaterial({ 
+                    color: 0xffaa00,
+                    transparent: true,
+                    opacity: 0.8
+                });
+                
+                // Create two parallel jaw plates
+                const jawGeometry = new THREE.BoxGeometry(gripperThickness, gripperDepth, gripperLength);
+                
+                // Left jaw
+                const leftJaw = new THREE.Mesh(jawGeometry, gripperMaterial);
+                leftJaw.position.set(-gripperWidth / 2, 0, 0);
+                gripperGroup.add(leftJaw);
+                
+                // Right jaw
+                const rightJaw = new THREE.Mesh(jawGeometry, gripperMaterial);
+                rightJaw.position.set(gripperWidth / 2, 0, 0);
+                gripperGroup.add(rightJaw);
+                
+                // Palm/base plate connecting the jaws
+                const palmGeometry = new THREE.BoxGeometry(gripperWidth, gripperDepth * 0.6, gripperThickness);
+                const palm = new THREE.Mesh(palmGeometry, gripperMaterial);
+                palm.position.set(0, 0, -gripperLength / 2);
+                gripperGroup.add(palm);
+                
+                // Approach direction indicator (line from gripper to grasp point)
+                const approachGeometry = new THREE.CylinderGeometry(0.0008, 0.0008, approachLength, 8);  // Increased width to 0.8mm
+                const approachMaterial = new THREE.MeshPhongMaterial({ 
+                    color: 0xffaa00,  // Match gripper color
+                    transparent: true,
+                    opacity: 0.8
+                });
+                const approachLine = new THREE.Mesh(approachGeometry, approachMaterial);
+                // Rotate to be vertical (pointing down along Z axis)
+                approachLine.rotation.x = Math.PI / 2;  // Rotate 90 degrees to be vertical
+                approachLine.position.set(0, 0, -gripperLength / 2 - approachLength / 2);
+                gripperGroup.add(approachLine);
+                
+                // Orient gripper based on approach vector if available
                 if (graspPoint.approach_vector) {
-                    const direction = new THREE.Vector3(
-                        graspPoint.approach_vector.x,
-                        graspPoint.approach_vector.y,
-                        graspPoint.approach_vector.z
-                    ).normalize();
+                    const approach = graspPoint.approach_vector;
+                    const approachVec = new THREE.Vector3(approach.x, approach.y, approach.z).normalize();
                     
-                    const arrowHelper = new THREE.ArrowHelper(
-                        direction,
-                        new THREE.Vector3(0, 0, 0),  // Origin relative to sphere
-                        0.01,  // Arrow length in meters (1cm)
-                        0xffff00,  // Yellow arrow color for better visibility
-                        0.003,  // Head length
-                        0.002   // Head width
-                    );
-                    sphere.add(arrowHelper);
+                    // Default gripper points along -Z axis, rotate to match approach vector
+                    const defaultDir = new THREE.Vector3(0, 0, -1);
+                    const quaternion = new THREE.Quaternion();
+                    quaternion.setFromUnitVectors(defaultDir, approachVec);
+                    gripperGroup.quaternion.copy(quaternion);
                 }
+                
+                // Position gripper slightly offset from sphere along approach direction
+                gripperGroup.position.set(0, 0, 0.008);  // 8mm offset
+                sphere.add(gripperGroup);
                 
                 return sphere;
             }
