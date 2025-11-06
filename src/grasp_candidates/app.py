@@ -4,13 +4,16 @@ Grasp Candidates Visualization UI
 Web-based 3D visualization tool for viewing objects with grasp points overlayed.
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 import json
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 import uvicorn
+import subprocess
+import os
 
 app = FastAPI(
     title="Grasp Candidates Visualizer",
@@ -122,6 +125,79 @@ async def read_root():
                 box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.2);
             }
             
+            .btn-execute {
+                width: 100%;
+                padding: 12px 20px;
+                background: linear-gradient(135deg, #27ae60 0%, #2ecc71 100%);
+                color: white;
+                border: none;
+                border-radius: 6px;
+                font-size: 16px;
+                font-weight: 600;
+                cursor: pointer;
+                transition: all 0.3s ease;
+                box-shadow: 0 4px 6px rgba(46, 204, 113, 0.3);
+            }
+            
+            .btn-execute:hover:not(:disabled) {
+                background: linear-gradient(135deg, #229954 0%, #27ae60 100%);
+                transform: translateY(-2px);
+                box-shadow: 0 6px 12px rgba(46, 204, 113, 0.4);
+            }
+            
+            .btn-execute:active:not(:disabled) {
+                transform: translateY(0);
+                box-shadow: 0 2px 4px rgba(46, 204, 113, 0.3);
+            }
+            
+            .btn-execute:disabled {
+                background: #95a5a6;
+                cursor: not-allowed;
+                opacity: 0.6;
+            }
+            
+            .btn-gripper {
+                padding: 10px 20px;
+                font-size: 14px;
+                font-weight: 600;
+                border: none;
+                border-radius: 6px;
+                cursor: pointer;
+                transition: all 0.3s ease;
+                margin: 5px;
+                min-width: 120px;
+            }
+            
+            .btn-gripper-open {
+                background: linear-gradient(135deg, #3498db 0%, #2980b9 100%);
+                color: white;
+                box-shadow: 0 4px 8px rgba(52, 152, 219, 0.3);
+            }
+            
+            .btn-gripper-open:hover {
+                background: linear-gradient(135deg, #2980b9 0%, #1f6391 100%);
+                transform: translateY(-2px);
+                box-shadow: 0 6px 12px rgba(52, 152, 219, 0.4);
+            }
+            
+            .btn-gripper-close {
+                background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+                color: white;
+                box-shadow: 0 4px 8px rgba(231, 76, 60, 0.3);
+            }
+            
+            .btn-gripper-close:hover {
+                background: linear-gradient(135deg, #c0392b 0%, #a93226 100%);
+                transform: translateY(-2px);
+                box-shadow: 0 6px 12px rgba(231, 76, 60, 0.4);
+            }
+            
+            .gripper-buttons {
+                display: flex;
+                gap: 10px;
+                margin-top: 10px;
+            }
+            
             .info-panel {
                 background: rgba(255, 255, 255, 0.95);
                 border-radius: 8px;
@@ -196,6 +272,16 @@ async def read_root():
                             <option value="">-- Select object first --</option>
                         </select>
                     </div>
+                    <div class="form-group" id="executeButtonGroup" style="display: none;">
+                        <button id="executeButton" class="btn-execute" disabled>Execute Grasp</button>
+                    </div>
+                    <div class="form-group">
+                        <h3>🤖 Gripper Control</h3>
+                        <div class="gripper-buttons">
+                            <button id="openGripperButton" class="btn-gripper btn-gripper-open">Open Gripper</button>
+                            <button id="closeGripperButton" class="btn-gripper btn-gripper-close">Close Gripper</button>
+                        </div>
+                    </div>
                 </div>
                 
                 <div class="info-panel">
@@ -225,7 +311,7 @@ async def read_root():
             
             // Colors
             const GRASP_COLOR_DEFAULT = 0x00ff00;  // Green
-            const GRASP_COLOR_SELECTED = 0xff0000;  // Red
+            const GRASP_COLOR_SELECTED = 0x3498db;  // Blue
             const WIREFRAME_COLOR = 0x888888;  // Gray
             
             function initScene() {
@@ -284,6 +370,9 @@ async def read_root():
                 // Event listeners
                 document.getElementById('objectSelect').addEventListener('change', onObjectChanged);
                 document.getElementById('graspSelect').addEventListener('change', onGraspPointChanged);
+                document.getElementById('executeButton').addEventListener('click', onExecuteButtonClick);
+                document.getElementById('openGripperButton').addEventListener('click', onOpenGripperClick);
+                document.getElementById('closeGripperButton').addEventListener('click', onCloseGripperClick);
                 
                 // Window resize
                 window.addEventListener('resize', onWindowResize);
@@ -584,6 +673,15 @@ async def read_root():
                 gripperGroup.position.set(0, 0, 0.008);  // 8mm offset
                 sphere.add(gripperGroup);
                 
+                // Store gripper reference in sphere userData for visibility control
+                sphere.userData.gripperGroup = gripperGroup;
+                
+                // Make gripper group and all its children clickable
+                gripperGroup.userData.isGripper = true;
+                gripperGroup.traverse((child) => {
+                    child.userData.isGripper = true;
+                });
+                
                 return sphere;
             }
             
@@ -618,7 +716,7 @@ async def read_root():
                 
                 if (!graspId) {
                     selectedGraspId = null;
-                    // Re-render grasp points to update colors
+                    // Re-render grasp points to update colors and show all grippers
                     if (currentGraspData && graspPointsGroup) {
                         graspPointsGroup.traverse((child) => {
                             if (child.userData && child.userData.type === 'grasp_point') {
@@ -628,10 +726,19 @@ async def read_root():
                                     child.material.color.setHex(color);
                                     child.material.emissive.setHex(color);
                                 }
+                                // Show all grippers when nothing is selected
+                                if (child.userData.gripperGroup) {
+                                    child.userData.gripperGroup.visible = true;
+                                }
                             }
                         });
                     }
                     updateGraspInfo(null);
+                    // Hide execute button
+                    const executeButtonGroup = document.getElementById('executeButtonGroup');
+                    const executeButton = document.getElementById('executeButton');
+                    if (executeButtonGroup) executeButtonGroup.style.display = 'none';
+                    if (executeButton) executeButton.disabled = true;
                     return;
                 }
                 
@@ -643,7 +750,7 @@ async def read_root():
                 if (graspPoint && graspPointsGroup) {
                     updateGraspInfo(graspPoint);
                     
-                    // Update colors of all grasp points
+                    // Update colors of all grasp points and hide/show grippers
                     graspPointsGroup.traverse((child) => {
                         if (child.userData && child.userData.type === 'grasp_point') {
                             const isSelected = child.userData.graspId === selectedGraspId;
@@ -652,13 +759,94 @@ async def read_root():
                                 child.material.color.setHex(color);
                                 child.material.emissive.setHex(color);
                             }
+                            // Hide grippers for non-selected grasp points, show for selected
+                            if (child.userData.gripperGroup) {
+                                child.userData.gripperGroup.visible = isSelected;
+                            }
                         }
                     });
+                    
+                    // Show and enable execute button
+                    const executeButtonGroup = document.getElementById('executeButtonGroup');
+                    const executeButton = document.getElementById('executeButton');
+                    if (executeButtonGroup) executeButtonGroup.style.display = 'block';
+                    if (executeButton) executeButton.disabled = false;
                 }
             }
             
             function generateId() {
                 return Math.random().toString(36).substr(2, 9);
+            }
+            
+            function onExecuteButtonClick() {
+                // Execute grasp when button is clicked
+                if (selectedGraspId && currentGraspData) {
+                    executeGrasp(currentGraspData.object_name, selectedGraspId);
+                }
+            }
+            
+            async function executeGrasp(objectName, graspId) {
+                try {
+                    updateStatus(`Executing grasp for ${objectName} at grasp point ${graspId}...`);
+                    
+                    const response = await fetch('/api/execute-grasp', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            object_name: objectName,
+                            grasp_id: graspId,
+                            topic: '/objects_poses_sim',
+                            movement_duration: 10.0
+                        })
+                    });
+                    
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
+                    }
+                    
+                    const result = await response.json();
+                    updateStatus(`✅ ${result.message}`);
+                    console.log('Grasp execution started:', result);
+                } catch (error) {
+                    console.error('Error executing grasp:', error);
+                    updateStatus(`❌ Error: ${error.message}`);
+                }
+            }
+            
+            function onOpenGripperClick() {
+                controlGripper('open');
+            }
+            
+            function onCloseGripperClick() {
+                controlGripper('close');
+            }
+            
+            async function controlGripper(command) {
+                try {
+                    updateStatus(`${command === 'open' ? 'Opening' : 'Closing'} gripper...`);
+                    const response = await fetch('/api/gripper-command', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ command: command })
+                    });
+                    
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
+                    }
+                    
+                    const result = await response.json();
+                    updateStatus(`✅ ${result.message}`);
+                    console.log(`Gripper ${command} command sent:`, result);
+                } catch (error) {
+                    console.error(`Error ${command === 'open' ? 'opening' : 'closing'} gripper:`, error);
+                    updateStatus(`❌ Error: ${error.message}`);
+                }
             }
             
             function updateGraspInfo(graspPoint) {
@@ -783,6 +971,175 @@ async def get_wireframe(object_name: str):
             return json.load(f)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error loading wireframe data: {str(e)}")
+
+
+class ExecuteGraspRequest(BaseModel):
+    object_name: str
+    grasp_id: int
+    topic: str = '/objects_poses_sim'
+    movement_duration: float = 10.0
+
+
+@app.post("/api/execute-grasp")
+async def execute_grasp(request: ExecuteGraspRequest):
+    """Execute visual servo grasp for the specified object and grasp point."""
+    try:
+        object_name = request.object_name
+        grasp_id = request.grasp_id
+        topic = request.topic
+        movement_duration = request.movement_duration
+        
+        if not object_name or grasp_id is None:
+            raise HTTPException(status_code=400, detail="object_name and grasp_id are required")
+        
+        # Get the script path
+        script_dir = Path(__file__).parent
+        script_path = script_dir / "visual_servo_grasp.py"
+        
+        if not script_path.exists():
+            raise HTTPException(status_code=404, detail=f"Script not found: {script_path}")
+        
+        # Map object name from JSON format (fork_yellow_scaled70) to topic format (fork_yellow)
+        # Remove _scaled70 suffix if present
+        topic_object_name = object_name.replace('_scaled70', '')
+        
+        # Build command with bash to source ROS2 and use python3.10
+        # Use bash -c to source ROS2 setup and then run the script
+        cmd_str = (
+            f"source /opt/ros/humble/setup.bash && "
+            f"python3.10 {script_path} "
+            f"--object-name {topic_object_name} "
+            f"--grasp-id {grasp_id} "
+            f"--topic {topic} "
+            f"--movement-duration {movement_duration}"
+        )
+        
+        # Execute in background (non-blocking) using bash
+        print(f"🔧 Executing command: {cmd_str}")
+        process = subprocess.Popen(
+            cmd_str,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,  # Combine stderr into stdout
+            cwd=str(script_dir.parent.parent),
+            shell=True,
+            executable='/bin/bash',
+            text=True,  # Return strings instead of bytes
+            bufsize=1  # Line buffered
+        )
+        
+        # Start a thread to read and log output
+        import threading
+        
+        def log_output(pipe, process_pid):
+            """Read output from process and log it."""
+            try:
+                for line in iter(pipe.readline, ''):
+                    if line:
+                        line = line.strip()
+                        if line:
+                            print(f"[PID {process_pid}] {line}")
+                pipe.close()
+            except Exception as e:
+                print(f"Error reading process output: {e}")
+        
+        # Start thread to log output
+        output_thread = threading.Thread(
+            target=log_output,
+            args=(process.stdout, process.pid),
+            daemon=True
+        )
+        output_thread.start()
+        
+        # Wait a moment to check if process started successfully
+        import time
+        time.sleep(0.5)
+        
+        # Check if process is still running or if it exited with error
+        return_code = process.poll()
+        if return_code is not None:
+            # Process exited immediately - read any error output
+            error_output = ""
+            try:
+                if process.stdout:
+                    remaining = process.stdout.read()
+                    if remaining:
+                        error_output = remaining.strip()
+            except:
+                pass
+            
+            error_msg = f"Process exited immediately with code {return_code}"
+            if error_output:
+                error_msg += f". Output: {error_output[:500]}"  # Limit error message length
+            print(f"❌ {error_msg}")
+            raise HTTPException(status_code=500, detail=error_msg)
+        
+        print(f"✅ Process started successfully with PID: {process.pid}")
+        
+        return JSONResponse(content={
+            "status": "started",
+            "message": f"Executing grasp for {topic_object_name} at grasp point {grasp_id}",
+            "pid": process.pid
+        })
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error executing grasp: {str(e)}")
+
+
+class GripperCommandRequest(BaseModel):
+    command: str  # 'open' or 'close'
+
+
+@app.post("/api/gripper-command")
+async def gripper_command(request: GripperCommandRequest):
+    """Send gripper command (open/close) via ROS2 topic."""
+    try:
+        command = request.command.lower()
+        
+        if command not in ['open', 'close']:
+            raise HTTPException(status_code=400, detail="Command must be 'open' or 'close'")
+        
+        # Build ROS2 topic pub command
+        cmd_str = (
+            f"source /opt/ros/humble/setup.bash && "
+            f"ros2 topic pub --once /gripper_command std_msgs/String \"{{data: '{command}'}}\""
+        )
+        
+        # Execute command
+        print(f"🔧 Executing gripper command: {cmd_str}")
+        result = subprocess.run(
+            cmd_str,
+            shell=True,
+            executable='/bin/bash',
+            capture_output=True,
+            text=True,
+            timeout=5.0
+        )
+        
+        if result.returncode != 0:
+            error_msg = f"Gripper command failed with code {result.returncode}"
+            if result.stderr:
+                error_msg += f". Error: {result.stderr[:200]}"
+            print(f"❌ {error_msg}")
+            raise HTTPException(status_code=500, detail=error_msg)
+        
+        print(f"✅ Gripper command '{command}' sent successfully")
+        if result.stdout:
+            print(f"Output: {result.stdout[:200]}")
+        
+        return JSONResponse(content={
+            "status": "success",
+            "message": f"Gripper {command} command sent successfully",
+            "command": command
+        })
+        
+    except subprocess.TimeoutExpired:
+        error_msg = "Gripper command timed out"
+        print(f"❌ {error_msg}")
+        raise HTTPException(status_code=500, detail=error_msg)
+    except Exception as e:
+        error_msg = f"Error sending gripper command: {str(e)}"
+        print(f"❌ {error_msg}")
+        raise HTTPException(status_code=500, detail=error_msg)
 
 
 def main():
