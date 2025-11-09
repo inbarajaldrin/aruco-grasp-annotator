@@ -186,3 +186,170 @@ def compute_ik_robust(position, rpy, max_tries=5, dx=0.001, multiple_seeds=True)
     
     print(f"Robust IK failed after trying {len(seed_configs)} seed configurations")
     return None
+
+def compute_ik_quaternion(position, quaternion, q_guess=None, max_tries=5, dx=0.001):
+    """
+    Compute inverse kinematics using quaternion for end-effector orientation.
+    
+    Args:
+        position: [x, y, z] target position
+        quaternion: [x, y, z, w] target orientation quaternion
+        q_guess: Initial guess for joint angles (optional)
+        max_tries: Number of position perturbations to try
+        dx: Position perturbation step size
+        
+    Returns:
+        Joint angles if successful, None otherwise
+    """
+    if q_guess is None:
+        # Convert quaternion to rotation matrix to extract yaw for initial guess
+        r = R.from_quat(quaternion)
+        yaw = r.as_euler('xyz', degrees=True)[2]
+        q6 = -(np.mod(yaw + 180, 360) - 180)
+        q_guess = np.radians([85, -80, 90, -90, -90, q6])
+    
+    original_position = np.array(position)
+    
+    # Convert quaternion to rotation matrix
+    r_target = R.from_quat(quaternion)
+    target_rot_matrix = r_target.as_matrix()
+    
+    for i in range(max_tries):
+        # Try small x-shift each iteration
+        perturbed_position = original_position.copy()
+        perturbed_position[0] += i * dx
+        
+        target_pose = np.eye(4)
+        target_pose[:3, 3] = perturbed_position
+        target_pose[:3, :3] = target_rot_matrix
+        
+        joint_bounds = [
+            (-np.pi, np.pi),
+            (-np.pi, np.pi),
+            (-np.pi, np.pi),
+            (-np.pi, np.pi),
+            (-np.pi, np.pi),
+            (-np.pi, np.pi)
+        ]
+        
+        # Use quaternion-based objective for better convergence
+        result = minimize(ik_objective_quaternion, q_guess, args=(target_pose,), 
+                         method='L-BFGS-B', bounds=joint_bounds)
+        
+        if result.success:
+            cost = ik_objective_quaternion(result.x, target_pose)
+            if cost < 0.01:  # Tight tolerance
+                return result.x
+    
+    print(f"IK failed after {max_tries} attempts. Tried perturbing from {original_position}.")
+    return None
+
+def compute_ik_quaternion_robust(position, quaternion, max_tries=5, dx=0.001, multiple_seeds=True, q_guess=None):
+    """
+    Enhanced IK solver using quaternion for orientation with multiple seed configurations.
+    
+    Args:
+        position: [x, y, z] target position
+        quaternion: [x, y, z, w] target orientation quaternion
+        max_tries: Number of position perturbations per seed
+        dx: Position perturbation step size
+        multiple_seeds: If True, try multiple initial joint configurations
+        q_guess: Optional initial joint angle guess (e.g., from previous waypoint or current robot state)
+        
+    Returns:
+        Joint angles if successful, None otherwise
+    """
+    original_position = np.array(position)
+    
+    # Convert quaternion to rotation matrix
+    r_target = R.from_quat(quaternion)
+    target_rot_matrix = r_target.as_matrix()
+    
+    # Extract yaw from quaternion for seed generation
+    yaw = r_target.as_euler('xyz', degrees=True)[2]
+    
+    # Create target pose
+    target_pose = np.eye(4)
+    target_pose[:3, 3] = original_position
+    target_pose[:3, :3] = target_rot_matrix
+    
+    # Seed configurations to try
+    if multiple_seeds:
+        # Generate diverse initial guesses
+        seed_configs = []
+        
+        # If we have a previous guess (e.g., from previous waypoint or current robot state), use it first
+        if q_guess is not None:
+            seed_configs.append(np.array(q_guess))
+        
+        # Add standard seeds
+        seed_configs.extend([
+            # Standard seeds
+            np.radians([85, -80, 90, -90, -90, -(np.mod(yaw + 180, 360) - 180)]),
+            np.radians([90, -90, 90, -90, -90, yaw]),
+            np.radians([0, -90, 90, -90, -90, yaw]),
+            np.radians([180, -90, 90, -90, -90, yaw]),
+            # Elbow-up configurations
+            np.radians([85, -100, 120, -110, -90, yaw]),
+            np.radians([85, -60, 60, -90, -90, yaw]),
+            # Wrist variations
+            np.radians([85, -80, 90, -90, 0, yaw]),
+            np.radians([85, -80, 90, -90, -180, yaw]),
+            # Additional variations
+            np.radians([85, -70, 80, -100, -90, yaw]),
+            np.radians([85, -90, 100, -100, -90, yaw]),
+        ])
+    else:
+        if q_guess is not None:
+            seed_configs = [np.array(q_guess)]
+        else:
+            q6 = -(np.mod(yaw + 180, 360) - 180)
+            seed_configs = [np.radians([85, -80, 90, -90, -90, q6])]
+    
+    print(f"Robust IK (quaternion): Trying {len(seed_configs)} seed configurations...")
+    
+    best_result = None
+    best_cost = float('inf')
+    
+    for seed_idx, q_guess in enumerate(seed_configs):
+        for i in range(max_tries):
+            # Try small x-shift each iteration
+            perturbed_position = original_position.copy()
+            perturbed_position[0] += i * dx
+            
+            perturbed_pose = target_pose.copy()
+            perturbed_pose[:3, 3] = perturbed_position
+            
+            joint_bounds = [
+                (-np.pi, np.pi),
+                (-np.pi, np.pi),
+                (-np.pi, np.pi),
+                (-np.pi, np.pi),
+                (-np.pi, np.pi),
+                (-np.pi, np.pi)
+            ]
+            
+            # Use quaternion-based objective for better convergence
+            result = minimize(ik_objective_quaternion, q_guess, args=(perturbed_pose,), 
+                            method='L-BFGS-B', bounds=joint_bounds)
+            
+            if result.success:
+                cost = ik_objective_quaternion(result.x, perturbed_pose)
+                
+                # Check if this is a good solution
+                if cost < 0.01:  # Tight tolerance
+                    print(f"Robust IK (quaternion) succeeded with seed {seed_idx+1}/{len(seed_configs)}, cost={cost:.6f}")
+                    return result.x
+                
+                # Keep track of best solution
+                if cost < best_cost:
+                    best_cost = cost
+                    best_result = result.x
+    
+    # If we found any reasonable solution, return it
+    if best_result is not None and best_cost < 0.1:
+        print(f"Robust IK (quaternion) found approximate solution with cost={best_cost:.6f}")
+        return best_result
+    
+    print(f"Robust IK (quaternion) failed after trying {len(seed_configs)} seed configurations")
+    return None
