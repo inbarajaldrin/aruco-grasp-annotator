@@ -314,11 +314,18 @@ async def read_root():
             let graspPointsGroup = null;
             let currentObjectData = null;
             let currentGraspData = null;
-            let selectedGraspId = null;
+            let currentGraspCandidates = null;
+            let selectedGraspPointId = null;  // Selected grasp point ID (e.g., 1, 2, 3)
+            let selectedGraspId = null;  // Selected candidate ID (e.g., "1_5")
+            let raycaster = new THREE.Raycaster();
+            let mouse = new THREE.Vector2();
             
             // Colors
             const GRASP_COLOR_DEFAULT = 0x00ff00;  // Green
-            const GRASP_COLOR_SELECTED = 0x3498db;  // Blue
+            const GRASP_COLOR_SELECTED_POINT = 0xff0000;  // Red for selected grasp point
+            const GRASP_COLOR_SELECTED_CANDIDATE = 0x3498db;  // Blue for selected candidate
+            const GRIPPER_COLOR_DEFAULT = 0xffaa00;  // Orange
+            const GRIPPER_COLOR_SELECTED = 0xff0000;  // Red for selected candidate's gripper
             const WIREFRAME_COLOR = 0x888888;  // Gray
             
             function initScene() {
@@ -381,6 +388,9 @@ async def read_root():
                 document.getElementById('executeButton').addEventListener('click', onExecuteButtonClick);
                 document.getElementById('openGripperButton').addEventListener('click', onOpenGripperClick);
                 document.getElementById('closeGripperButton').addEventListener('click', onCloseGripperClick);
+                
+                // Mouse click handler for grasp point selection
+                renderer.domElement.addEventListener('click', onGraspPointClick);
                 
                 // Window resize
                 window.addEventListener('resize', onWindowResize);
@@ -533,13 +543,14 @@ async def read_root():
                             const candidatesForPoint = currentGraspCandidates.grasp_candidates.filter(c => c.grasp_point_id === gpId);
                             
                             candidatesForPoint.forEach((candidate, idx) => {
-                                // Create sphere using grasp point position, but use candidate's approach vector
+                                // Create sphere using grasp point position, but use candidate's approach quaternion/vector
                                 const candidateData = {
                                     id: `${gpId}_${candidate.direction_id}`, // Unique ID: grasp_point_id_direction_id
                                     grasp_point_id: gpId,
                                     direction_id: candidate.direction_id,
                                     position: graspPoint.position, // Use position from grasp data
-                                    approach_vector: candidate.approach_vector, // Use approach vector from candidate
+                                    approach_quaternion: candidate.approach_quaternion, // Use approach quaternion from candidate (new format)
+                                    approach_vector: candidate.approach_vector, // Use approach vector from candidate (old format, fallback)
                                     type: graspPoint.type || 'center_point'
                                 };
                                 
@@ -636,8 +647,15 @@ async def read_root():
                 const geometry = new THREE.SphereGeometry(0.003, 16, 16);  // 0.003 m = 3mm
                 // Calculate candidate ID once
                 const candidateId = graspPoint.id || `${graspPoint.grasp_point_id}_${graspPoint.direction_id}`;
-                const isSelected = selectedGraspId === candidateId;
-                const color = isSelected ? GRASP_COLOR_SELECTED : GRASP_COLOR_DEFAULT;
+                const graspPointId = graspPoint.grasp_point_id;
+                
+                // Determine color based on selection state
+                let color = GRASP_COLOR_DEFAULT;
+                if (selectedGraspPointId === graspPointId) {
+                    color = GRASP_COLOR_SELECTED_POINT;  // Red for selected grasp point
+                } else if (selectedGraspId === candidateId) {
+                    color = GRASP_COLOR_SELECTED_CANDIDATE;  // Blue for selected candidate
+                }
                 const material = new THREE.MeshPhongMaterial({
                     color: color,
                     emissive: color,
@@ -657,11 +675,13 @@ async def read_root():
                 sphere.userData = {
                     name: `Grasp-${graspPoint.grasp_point_id || graspPoint.id}_${graspPoint.direction_id || ''}`,
                     type: 'grasp_point',
+                    graspPointId: graspPointId,  // Store grasp point ID for filtering
                     graspId: graspPoint.grasp_point_id || graspPoint.id,
                     directionId: graspPoint.direction_id,
                     id: candidateId, // Use the unique candidate ID
                     displayName: `Grasp Point ${graspPoint.grasp_point_id || graspPoint.id}${graspPoint.direction_id ? ` - Direction ${graspPoint.direction_id}` : ''}`,
-                    originalColor: color
+                    originalColor: color,
+                    isClickable: true  // Mark as clickable
                 };
                 
                 // Add gripper visualization (parallel-jaw gripper)
@@ -674,9 +694,11 @@ async def read_root():
                 const gripperThickness = 0.001;  // 1mm - thickness of each jaw
                 const approachLength = 0.015;    // 15mm - length of approach indicator
                 
-                // Material for gripper
+                // Material for gripper - color depends on selection
+                const isCandidateSelected = selectedGraspId === candidateId;
+                const gripperColor = isCandidateSelected ? GRIPPER_COLOR_SELECTED : GRIPPER_COLOR_DEFAULT;
                 const gripperMaterial = new THREE.MeshPhongMaterial({ 
-                    color: 0xffaa00,
+                    color: gripperColor,
                     transparent: true,
                     opacity: 0.8
                 });
@@ -713,11 +735,31 @@ async def read_root():
                 approachLine.position.set(0, 0, -gripperLength / 2 - approachLength / 2);
                 gripperGroup.add(approachLine);
                 
-                // Orient gripper based on approach vector if available
-                // The approach vector points away from the grasp point, so we negate it
-                // to make the gripper point TOWARDS the grasp point
+                // Orient gripper based on approach quaternion (new format) or approach vector (old format)
+                // The approach quaternion represents the orientation where Z-axis points in approach direction
+                // The gripper should point TOWARDS the grasp point (opposite to approach direction)
                 let approachVec = new THREE.Vector3(0, 0, -1); // Default direction
-                if (graspPoint.approach_vector) {
+                
+                if (graspPoint.approach_quaternion) {
+                    // New format: use approach quaternion directly
+                    const quat = graspPoint.approach_quaternion;
+                    const approachQuat = new THREE.Quaternion(quat.x, quat.y, quat.z, quat.w);
+                    
+                    // Extract Z-axis direction from quaternion (this is the approach direction)
+                    const zAxis = new THREE.Vector3(0, 0, 1);
+                    zAxis.applyQuaternion(approachQuat);
+                    
+                    // Negate to get gripper pointing direction (towards grasp point)
+                    approachVec = zAxis.negate().normalize();
+                    
+                    // Create quaternion for gripper orientation (gripper Z points down, opposite to approach)
+                    const gripperZAxis = new THREE.Vector3(0, 0, 1); // Gripper Z in local frame
+                    const defaultDir = new THREE.Vector3(0, 0, -1); // Default gripper pointing direction
+                    const quaternion = new THREE.Quaternion();
+                    quaternion.setFromUnitVectors(defaultDir, approachVec);
+                    gripperGroup.quaternion.copy(quaternion);
+                } else if (graspPoint.approach_vector) {
+                    // Old format: use approach vector (backward compatibility)
                     const approach = graspPoint.approach_vector;
                     // Negate the approach vector to point towards the grasp point
                     approachVec = new THREE.Vector3(-approach.x, -approach.y, -approach.z).normalize();
@@ -739,14 +781,67 @@ async def read_root():
                 
                 // Store gripper reference in sphere userData for visibility control
                 sphere.userData.gripperGroup = gripperGroup;
+                sphere.userData.gripperMaterial = gripperMaterial;  // Store for color updates
                 
                 // Make gripper group and all its children clickable
                 gripperGroup.userData.isGripper = true;
                 gripperGroup.traverse((child) => {
                     child.userData.isGripper = true;
+                    child.userData.parentSphere = sphere;  // Reference back to sphere
                 });
                 
                 return sphere;
+            }
+            
+            function onGraspPointClick(event) {
+                // Calculate mouse position in normalized device coordinates (-1 to +1)
+                const rect = renderer.domElement.getBoundingClientRect();
+                mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+                mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+                
+                // Update raycaster
+                raycaster.setFromCamera(mouse, camera);
+                
+                // Find intersections with grasp points
+                const intersects = raycaster.intersectObjects(graspPointsGroup.children, true);
+                
+                if (intersects.length > 0) {
+                    // Find the closest grasp point sphere (not gripper parts)
+                    for (let intersect of intersects) {
+                        let obj = intersect.object;
+                        // Traverse up to find the sphere
+                        while (obj && obj.userData) {
+                            if (obj.userData.type === 'grasp_point' && obj.userData.isClickable) {
+                                const clickedGraspPointId = obj.userData.graspPointId;
+                                
+                                // If clicking the same grasp point, deselect it
+                                if (selectedGraspPointId === clickedGraspPointId) {
+                                    selectedGraspPointId = null;
+                                    selectedGraspId = null;
+                                    updateGraspPointSelector();
+                                    updateVisualization();
+                                    return;
+                                }
+                                
+                                // Select the clicked grasp point
+                                selectedGraspPointId = clickedGraspPointId;
+                                selectedGraspId = null;  // Clear candidate selection
+                                
+                                // Update dropdowns
+                                document.getElementById('graspSelect').value = clickedGraspPointId.toString();
+                                document.getElementById('directionSelect').value = '';
+                                document.getElementById('directionSelect').disabled = false;
+                                updateDirectionSelector(clickedGraspPointId.toString());
+                                
+                                // Update visualization
+                                updateVisualization();
+                                
+                                return;
+                            }
+                            obj = obj.parent;
+                        }
+                    }
+                }
             }
             
             function clearGraspPoints() {
@@ -824,36 +919,21 @@ async def read_root():
                 directionSelect.value = '';
                 selectedGraspId = null;
                 
-                if (!graspPointId) {
-                    // Re-render grasp points to update colors and show all grippers
-                    if (currentGraspData && graspPointsGroup) {
-                        graspPointsGroup.traverse((child) => {
-                            if (child.userData && child.userData.type === 'grasp_point') {
-                                const isSelected = false;
-                                const color = GRASP_COLOR_DEFAULT;
-                                if (child.material) {
-                                    child.material.color.setHex(color);
-                                    child.material.emissive.setHex(color);
-                                }
-                                // Show all grippers when nothing is selected
-                                if (child.userData.gripperGroup) {
-                                    child.userData.gripperGroup.visible = true;
-                                }
-                            }
-                        });
-                    }
-                    updateGraspInfo(null);
-                    // Hide execute button
-                    const executeButtonGroup = document.getElementById('executeButtonGroup');
-                    const executeButton = document.getElementById('executeButton');
-                    if (executeButtonGroup) executeButtonGroup.style.display = 'none';
-                    if (executeButton) executeButton.disabled = true;
-                    updateDirectionSelector(null);
-                    return;
+                if (graspPointId) {
+                    selectedGraspPointId = parseInt(graspPointId);
+                } else {
+                    selectedGraspPointId = null;
                 }
                 
                 // Update direction selector with available directions for this grasp point
-                updateDirectionSelector(graspPointId);
+                if (graspPointId) {
+                    updateDirectionSelector(graspPointId);
+                } else {
+                    updateDirectionSelector(null);
+                }
+                
+                // Update visualization
+                updateVisualization();
             }
             
             function onDirectionChanged(event) {
@@ -862,23 +942,7 @@ async def read_root():
                 
                 if (!graspPointId || !directionId) {
                     selectedGraspId = null;
-                    // Re-render grasp points to update colors and show all grippers
-                    if (currentGraspData && graspPointsGroup) {
-                        graspPointsGroup.traverse((child) => {
-                            if (child.userData && child.userData.type === 'grasp_point') {
-                                const isSelected = false;
-                                const color = GRASP_COLOR_DEFAULT;
-                                if (child.material) {
-                                    child.material.color.setHex(color);
-                                    child.material.emissive.setHex(color);
-                                }
-                                // Show all grippers when nothing is selected
-                                if (child.userData.gripperGroup) {
-                                    child.userData.gripperGroup.visible = true;
-                                }
-                            }
-                        });
-                    }
+                    updateVisualization();
                     updateGraspInfo(null);
                     // Hide execute button
                     const executeButtonGroup = document.getElementById('executeButtonGroup');
@@ -901,33 +965,21 @@ async def read_root():
                 // Find corresponding grasp point for position
                 const graspPoint = currentGraspData.grasp_points.find(gp => gp.id === gpId);
                 
-                if (candidate && graspPoint && graspPointsGroup) {
+                if (candidate && graspPoint) {
                     // Create combined data for display
                     const candidateData = {
                         id: selectedGraspId,
                         grasp_point_id: graspPointId,
                         direction_id: directionId,
                         position: graspPoint.position,
-                        approach_vector: candidate.approach_vector,
+                        approach_quaternion: candidate.approach_quaternion, // New format
+                        approach_vector: candidate.approach_vector, // Old format (fallback)
                         type: graspPoint.type || 'center_point'
                     };
                     updateGraspInfo(candidateData);
                     
-                    // Update colors of all grasp candidates and hide/show grippers
-                    graspPointsGroup.traverse((child) => {
-                        if (child.userData && child.userData.type === 'grasp_point') {
-                            const isSelected = child.userData.id === selectedGraspId;
-                            const color = isSelected ? GRASP_COLOR_SELECTED : GRASP_COLOR_DEFAULT;
-                            if (child.material) {
-                                child.material.color.setHex(color);
-                                child.material.emissive.setHex(color);
-                            }
-                            // Hide grippers for non-selected grasp points, show for selected
-                            if (child.userData.gripperGroup) {
-                                child.userData.gripperGroup.visible = isSelected;
-                            }
-                        }
-                    });
+                    // Update visualization
+                    updateVisualization();
                     
                     // Show and enable execute button
                     const executeButtonGroup = document.getElementById('executeButtonGroup');
@@ -935,6 +987,103 @@ async def read_root():
                     if (executeButtonGroup) executeButtonGroup.style.display = 'block';
                     if (executeButton) executeButton.disabled = false;
                 }
+            }
+            
+            function updateVisualization() {
+                if (!graspPointsGroup) return;
+                
+                graspPointsGroup.traverse((child) => {
+                    if (child.userData && child.userData.type === 'grasp_point') {
+                        const graspPointId = child.userData.graspPointId;
+                        const candidateId = child.userData.id;
+                        
+                        // Determine sphere color
+                        let sphereColor = GRASP_COLOR_DEFAULT;
+                        if (selectedGraspPointId === graspPointId) {
+                            sphereColor = GRASP_COLOR_SELECTED_POINT;  // Red for selected grasp point
+                        } else if (selectedGraspId === candidateId) {
+                            sphereColor = GRASP_COLOR_SELECTED_CANDIDATE;  // Blue for selected candidate
+                        }
+                        
+                        // Update sphere color
+                        if (child.material) {
+                            child.material.color.setHex(sphereColor);
+                            child.material.emissive.setHex(sphereColor);
+                        }
+                        
+                        // Handle visibility and gripper color based on selection state
+                        // Priority: candidate selection > grasp point selection > show all
+                        if (selectedGraspId !== null) {
+                            // A candidate is selected - only show that candidate, hide all others
+                            if (candidateId === selectedGraspId) {
+                                // Selected candidate: blue sphere, red gripper visible
+                                child.visible = true;
+                                child.material.opacity = 0.9;
+                                
+                                // Update gripper to red and make it visible
+                                if (child.userData.gripperGroup) {
+                                    child.userData.gripperGroup.visible = true;
+                                    if (child.userData.gripperMaterial) {
+                                        child.userData.gripperMaterial.color.setHex(GRIPPER_COLOR_SELECTED);
+                                    }
+                                    child.userData.gripperGroup.traverse((gripperChild) => {
+                                        if (gripperChild.material) {
+                                            gripperChild.material.color.setHex(GRIPPER_COLOR_SELECTED);
+                                        }
+                                    });
+                                }
+                            } else {
+                                // Hide all other candidates (including from same grasp point)
+                                child.visible = false;
+                            }
+                        } else if (selectedGraspPointId !== null) {
+                            // A grasp point is selected (but no candidate selected)
+                            // Show all candidates from selected grasp point, hide others
+                            if (graspPointId === selectedGraspPointId) {
+                                // Show all candidates from selected grasp point
+                                child.visible = true;
+                                child.material.opacity = 0.9;
+                                
+                                // Update gripper color - orange for all (no candidate selected)
+                                if (child.userData.gripperGroup) {
+                                    child.userData.gripperGroup.visible = true;
+                                    const gripperColor = GRIPPER_COLOR_DEFAULT;
+                                    
+                                    // Update gripper material color
+                                    if (child.userData.gripperMaterial) {
+                                        child.userData.gripperMaterial.color.setHex(gripperColor);
+                                    }
+                                    
+                                    // Update all gripper children colors
+                                    child.userData.gripperGroup.traverse((gripperChild) => {
+                                        if (gripperChild.material) {
+                                            gripperChild.material.color.setHex(gripperColor);
+                                        }
+                                    });
+                                }
+                            } else {
+                                // Hide candidates from other grasp points
+                                child.visible = false;
+                            }
+                        } else {
+                            // Nothing selected: show all with default settings
+                            child.visible = true;
+                            child.material.opacity = 0.9;
+                            
+                            if (child.userData.gripperGroup) {
+                                child.userData.gripperGroup.visible = true;
+                                if (child.userData.gripperMaterial) {
+                                    child.userData.gripperMaterial.color.setHex(GRIPPER_COLOR_DEFAULT);
+                                }
+                                child.userData.gripperGroup.traverse((gripperChild) => {
+                                    if (gripperChild.material) {
+                                        gripperChild.material.color.setHex(GRIPPER_COLOR_DEFAULT);
+                                    }
+                                });
+                            }
+                        }
+                    }
+                });
             }
             
             function generateId() {
@@ -1026,7 +1175,26 @@ async def read_root():
                 }
                 
                 const pos = candidateData.position;
-                const approach = candidateData.approach_vector || { x: 0, y: 0, z: 1 };
+                const approachQuat = candidateData.approach_quaternion;
+                const approachVec = candidateData.approach_vector || { x: 0, y: 0, z: 1 };
+                
+                let approachInfo = '';
+                if (approachQuat) {
+                    approachInfo = `
+                        <div class="info-item">
+                            <strong>Approach Quaternion:</strong>
+                            <span>X: ${approachQuat.x.toFixed(4)}, Y: ${approachQuat.y.toFixed(4)}, Z: ${approachQuat.z.toFixed(4)}, W: ${approachQuat.w.toFixed(4)}</span>
+                        </div>
+                    `;
+                }
+                if (approachVec) {
+                    approachInfo += `
+                        <div class="info-item">
+                            <strong>Approach Vector:</strong>
+                            <span>X: ${approachVec.x.toFixed(3)}, Y: ${approachVec.y.toFixed(3)}, Z: ${approachVec.z.toFixed(3)}</span>
+                        </div>
+                    `;
+                }
                 
                 infoDiv.innerHTML = `
                     <div class="info-item">
@@ -1041,10 +1209,7 @@ async def read_root():
                         <strong>Position:</strong>
                         <span>X: ${pos.x.toFixed(4)}m, Y: ${pos.y.toFixed(4)}m, Z: ${pos.z.toFixed(4)}m</span>
                     </div>
-                    <div class="info-item">
-                        <strong>Approach Vector:</strong>
-                        <span>X: ${approach.x.toFixed(3)}, Y: ${approach.y.toFixed(3)}, Z: ${approach.z.toFixed(3)}</span>
-                    </div>
+                    ${approachInfo}
                     <div class="info-item">
                         <strong>Type:</strong>
                         <span>${candidateData.type || 'center_point'}</span>
@@ -1057,6 +1222,7 @@ async def read_root():
                 currentObjectData = null;
                 currentGraspData = null;
                 currentGraspCandidates = null;
+                selectedGraspPointId = null;
                 selectedGraspId = null;
                 
                 document.getElementById('graspSelect').innerHTML = '<option value="">-- Select object first --</option>';
@@ -1158,22 +1324,57 @@ async def get_wireframe(object_name: str):
 
 class ExecuteGraspRequest(BaseModel):
     object_name: str
-    grasp_id: int
+    grasp_id: str  # Changed to str to support format "grasp_point_id_direction_id"
     topic: str = '/objects_poses_sim'
     movement_duration: float = 10.0
+    grasp_point_id: Optional[int] = None  # New: explicit grasp point ID
+    direction_id: Optional[int] = None  # New: explicit direction ID
 
 
 @app.post("/api/execute-grasp")
 async def execute_grasp(request: ExecuteGraspRequest):
-    """Execute visual servo grasp for the specified object and grasp point."""
+    """Execute visual servo grasp for the specified object and grasp candidate."""
     try:
         object_name = request.object_name
-        grasp_id = request.grasp_id
+        grasp_id = request.grasp_id  # Format: "grasp_point_id_direction_id" or legacy integer
         topic = request.topic
         movement_duration = request.movement_duration
+        grasp_point_id = request.grasp_point_id
+        direction_id = request.direction_id
         
-        if not object_name or grasp_id is None:
-            raise HTTPException(status_code=400, detail="object_name and grasp_id are required")
+        if not object_name:
+            raise HTTPException(status_code=400, detail="object_name is required")
+        
+        # Parse grasp_id if grasp_point_id and direction_id are not explicitly provided
+        if grasp_point_id is None or direction_id is None:
+            if grasp_id:
+                # Try to parse grasp_id as "grasp_point_id_direction_id" format
+                if '_' in str(grasp_id):
+                    parts = str(grasp_id).split('_')
+                    if len(parts) >= 2:
+                        try:
+                            grasp_point_id = int(parts[0])
+                            direction_id = int(parts[1])
+                        except ValueError:
+                            # Fallback: try to parse as legacy integer grasp_id
+                            try:
+                                legacy_grasp_id = int(grasp_id)
+                                # For legacy mode, we'll use grasp-id parameter
+                                grasp_point_id = None
+                                direction_id = None
+                            except ValueError:
+                                raise HTTPException(status_code=400, detail=f"Invalid grasp_id format: {grasp_id}. Expected 'grasp_point_id_direction_id' or integer")
+                else:
+                    # Try to parse as legacy integer grasp_id
+                    try:
+                        legacy_grasp_id = int(grasp_id)
+                        # For legacy mode, we'll use grasp-id parameter
+                        grasp_point_id = None
+                        direction_id = None
+                    except ValueError:
+                        raise HTTPException(status_code=400, detail=f"Invalid grasp_id format: {grasp_id}. Expected 'grasp_point_id_direction_id' or integer")
+            else:
+                raise HTTPException(status_code=400, detail="grasp_id or both grasp_point_id and direction_id are required")
         
         # Get the script path
         script_dir = Path(__file__).parent
@@ -1187,15 +1388,26 @@ async def execute_grasp(request: ExecuteGraspRequest):
         topic_object_name = object_name.replace('_scaled70', '')
         
         # Build command with bash to source ROS2 and use python3.10
-        # Use bash -c to source ROS2 setup and then run the script
-        cmd_str = (
-            f"source /opt/ros/humble/setup.bash && "
-            f"python3.10 {script_path} "
-            f"--object-name {topic_object_name} "
-            f"--grasp-id {grasp_id} "
-            f"--topic {topic} "
+        # Use new grasp candidate parameters if available, otherwise fall back to legacy grasp-id
+        cmd_parts = [
+            "source /opt/ros/humble/setup.bash &&",
+            f"python3.10 {script_path}",
+            f"--object-name {topic_object_name}",
+            f"--topic {topic}",
             f"--movement-duration {movement_duration}"
-        )
+        ]
+        
+        if grasp_point_id is not None and direction_id is not None:
+            # Use new grasp candidate mode
+            cmd_parts.extend([
+                f"--grasp-point-id {grasp_point_id}",
+                f"--direction-id {direction_id}"
+            ])
+        else:
+            # Use legacy mode with grasp-id
+            cmd_parts.append(f"--grasp-id {grasp_id}")
+        
+        cmd_str = " ".join(cmd_parts)
         
         # Execute in background (non-blocking) using bash
         print(f"🔧 Executing command: {cmd_str}")
@@ -1258,10 +1470,18 @@ async def execute_grasp(request: ExecuteGraspRequest):
         
         print(f"✅ Process started successfully with PID: {process.pid}")
         
+        # Create message based on mode
+        if grasp_point_id is not None and direction_id is not None:
+            message = f"Executing grasp for {topic_object_name} at grasp_point_id {grasp_point_id}, direction_id {direction_id}"
+        else:
+            message = f"Executing grasp for {topic_object_name} at grasp point {grasp_id} (legacy mode)"
+        
         return JSONResponse(content={
             "status": "started",
-            "message": f"Executing grasp for {topic_object_name} at grasp point {grasp_id}",
-            "pid": process.pid
+            "message": message,
+            "pid": process.pid,
+            "grasp_point_id": grasp_point_id,
+            "direction_id": direction_id
         })
         
     except Exception as e:
@@ -1344,4 +1564,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

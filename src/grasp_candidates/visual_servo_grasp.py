@@ -23,7 +23,8 @@ import numpy as np
 from scipy.spatial.transform import Rotation as R
 
 # Import from local action_libraries file
-from action_libraries import hover_over_grasp, hover_arbitrary_orientation
+from action_libraries import hover_over_grasp, make_point
+from action_libraries import compute_ik_quaternion_robust
 
 # Import the new message types
 try:
@@ -135,7 +136,7 @@ class PoseKalmanFilter:
         return self.x[:6], self.x[6:12]
 
 class DirectObjectMove(Node):
-    def __init__(self, topic_name="/objects_poses_sim", object_name="blue_dot_0", height=None, movement_duration=10.0, target_xyz=None, target_xyzw=None, grasp_points_topic="/grasp_points", grasp_id=None, grasp_candidates_topic="/grasp_candidates", grasp_candidate_id=None, gripper_offset=0.115, orientation_offset=None):
+    def __init__(self, topic_name="/objects_poses_sim", object_name="blue_dot_0", height=None, movement_duration=10.0, target_xyz=None, target_xyzw=None, grasp_points_topic="/grasp_points", grasp_id=None, grasp_candidates_topic="/grasp_candidates", grasp_point_id=None, direction_id=None):
         super().__init__('direct_object_move')
         
         self.topic_name = topic_name
@@ -145,23 +146,23 @@ class DirectObjectMove(Node):
         self.target_xyz = target_xyz  # Optional target position [x, y, z]
         self.target_xyzw = target_xyzw  # Optional target orientation [x, y, z, w]
         self.grasp_points_topic = grasp_points_topic  # Topic for grasp points
-        self.grasp_id = grasp_id  # Specific grasp point ID to use (legacy)
+        self.grasp_id = grasp_id  # Specific grasp point ID to use (legacy, for backward compatibility)
         self.grasp_candidates_topic = grasp_candidates_topic  # Topic for grasp candidates
-        self.grasp_candidate_id = grasp_candidate_id  # Specific grasp candidate ID to use (new)
+        self.grasp_point_id = grasp_point_id  # Grasp point ID for candidate selection
+        self.direction_id = direction_id  # Direction ID for candidate selection
         self.last_target_pose = None
         self.position_threshold = 0.005  # 5mm
         self.angle_threshold = 2.0       # 2 degrees
         # Calibration offset to correct systematic detection bias
         self.calibration_offset_x = -0.0  # -0mm correction (move left)
         self.calibration_offset_y = -0.0  # +0mm correction (move forward)
-        # Gripper offset distance from TCP to fingertips (along gripper Z-axis)
-        self.object_to_ee_offset = gripper_offset  # Default: 0.115m = 11.5cm
-        # Orientation offset quaternion [x, y, z, w] to apply to grasp candidate orientations
-        # Default: [0, 1, 0, 0] = 180° rotation around Y-axis
-        if orientation_offset is None:
-            self.orientation_offset = np.array([0.0, 1.0, 0.0, 0.0])
-        else:
-            self.orientation_offset = np.array(orientation_offset)
+        # TCP offset distance (from TCP to fingertips along gripper Z-axis)
+        # This implements a spherical flexure joint concept (same as URSim TCP control):
+        # - The offset point (fingertips) acts as a fixed point in space
+        # - When rotating the gripper, TCP moves to keep the offset point fixed
+        # - offset_point = tcp_position + tcp_offset * z_axis_gripper
+        # - tcp_position = offset_point - tcp_offset * z_axis_gripper
+        self.tcp_offset = 0.115  # 0.115m = 11.5cm (distance from TCP to fingertips)
         
         # Initialize Kalman filter
         self.kalman_filter = PoseKalmanFilter(process_noise=0.005, measurement_noise=0.05)
@@ -169,13 +170,25 @@ class DirectObjectMove(Node):
         
         # Store latest grasp points and candidates
         self.latest_grasp_points = None
-        self.selected_grasp_point = None
         self.latest_grasp_candidates = None
+        self.selected_grasp_point = None
         self.selected_grasp_candidate = None
         
         # Store current end-effector pose
         self.current_ee_pose = None
         self.ee_pose_received = False
+        
+        # Store current joint angles for IK seeding (same as URSim TCP control)
+        self.current_joint_angles = None
+        
+        # Subscribe to joint states for IK seeding
+        from sensor_msgs.msg import JointState
+        self.joint_state_sub = self.create_subscription(
+            JointState,
+            '/joint_states',
+            self.joint_state_callback,
+            10
+        )
         
         # Subscribe to object poses topic
         # Use TFMessage (for /objects_poses_real topic which publishes TFMessage)
@@ -202,31 +215,35 @@ class DirectObjectMove(Node):
         # Note: ObjectPoseArray subscription removed - topic publishes TFMessage format
         # If you need ObjectPoseArray support, use a different topic name
         
-        # Subscribe to grasp candidates topic if grasp_candidate_id is provided
-        if self.grasp_candidate_id is not None and GraspPointArray is not None:
-            self.grasp_candidates_sub = self.create_subscription(
-                GraspPointArray,
-                grasp_candidates_topic,
-                self.grasp_candidates_callback,
-                5
-            )
-            self.get_logger().info(f"🎯 Grasp candidate mode: Looking for candidate_id {grasp_candidate_id} on topic {grasp_candidates_topic}")
-            self.grasp_points_sub = None
         # Subscribe to grasp points topic if grasp_id is provided (legacy mode)
-        elif self.grasp_id is not None and GraspPointArray is not None:
+        if self.grasp_id is not None and GraspPointArray is not None:
             self.grasp_points_sub = self.create_subscription(
                 GraspPointArray,
                 grasp_points_topic,
                 self.grasp_points_callback,
                 5
             )
-            self.grasp_candidates_sub = None
             self.get_logger().info(f"🎯 Grasp point mode (legacy): Looking for grasp_id {grasp_id} on topic {grasp_points_topic}")
         else:
             self.grasp_points_sub = None
+            if self.grasp_id is not None:
+                self.get_logger().warn(f"⚠️ Grasp point mode requested but GraspPointArray not available. Falling back to object center.")
+        
+        # Subscribe to grasp candidates topic if grasp_point_id and direction_id are provided
+        if self.grasp_point_id is not None and self.direction_id is not None and GraspPointArray is not None:
+            self.grasp_candidates_sub = self.create_subscription(
+                GraspPointArray,
+                grasp_candidates_topic,
+                self.grasp_candidates_callback,
+                5
+            )
+            # Calculate expected grasp_id: grasp_point_id * 100 + direction_id
+            expected_grasp_id = self.grasp_point_id * 100 + self.direction_id
+            self.get_logger().info(f"🎯 Grasp candidate mode: Looking for grasp_point_id {grasp_point_id}, direction_id {direction_id} (grasp_id {expected_grasp_id}) on topic {grasp_candidates_topic}")
+        else:
             self.grasp_candidates_sub = None
-            if self.grasp_id is not None or self.grasp_candidate_id is not None:
-                self.get_logger().warn(f"⚠️ Grasp mode requested but GraspPointArray not available. Falling back to object center.")
+            if (self.grasp_point_id is not None or self.direction_id is not None) and GraspPointArray is None:
+                self.get_logger().warn(f"⚠️ Grasp candidate mode requested but GraspPointArray not available. Falling back to object center.")
         
         # Add timer to control update frequency (every 2 seconds = 0.5Hz)
         self.update_timer = self.create_timer(3.0, self.timer_callback)
@@ -234,8 +251,6 @@ class DirectObjectMove(Node):
         self.movement_completed = False  # Flag to track if movement has been completed
         self.should_exit = False  # Flag to control exit
         self.trajectory_in_progress = False  # Flag to track if trajectory is executing
-        self.current_trajectory = None  # Store full trajectory for sequential execution
-        self.current_trajectory_step = 0  # Track which step we're on (1 or 2)
         
         # Action client for trajectory execution
         self.action_client = ActionClient(
@@ -248,14 +263,74 @@ class DirectObjectMove(Node):
         if height is not None:
             self.get_logger().info(f"📏 Target height: {height}m (offset will be ignored)")
         else:
-            self.get_logger().info(f"📏 Using {self.object_to_ee_offset*100:.1f}cm offset from object/grasp point")
+            self.get_logger().info(f"📏 Using {self.tcp_offset*100:.1f}cm TCP offset (from TCP to fingertips along gripper Z-axis)")
         self.get_logger().info(f"⏱️ Movement duration: {movement_duration}s")
-        if self.grasp_candidate_id is not None:
-            self.get_logger().info(f"🎯 Grasp candidate mode: Using candidate_id {grasp_candidate_id} from topic {grasp_candidates_topic}")
+        if self.grasp_point_id is not None and self.direction_id is not None:
+            self.get_logger().info(f"🎯 Grasp candidate mode: Using grasp_point_id {grasp_point_id}, direction_id {direction_id} from topic {grasp_candidates_topic}")
         elif self.grasp_id is not None:
             self.get_logger().info(f"🎯 Grasp point mode (legacy): Using grasp_id {grasp_id} from topic {grasp_points_topic}")
         else:
             self.get_logger().info(f"🎯 Object center mode: Moving to object center")
+    
+    def compute_offset_point(self, tcp_position, quaternion):
+        """Compute the offset point from TCP position using spherical flexure joint concept
+        (Same as URSim TCP control)
+        
+        The offset vector is defined in the tool frame (gripper frame) and then
+        transformed to world frame using the tool orientation quaternion.
+        
+        Args:
+            tcp_position: TCP position in world frame [x, y, z]
+            quaternion: TCP/tool orientation quaternion [x, y, z, w] (tool frame to world frame)
+        
+        Returns:
+            offset_point: Position of the offset point (fingertips) in world frame [x, y, z]
+        """
+        # Offset vector in tool frame (gripper frame): [0, 0, offset_distance]
+        # In tool frame, Z-axis points from TCP to fingertips (downward)
+        offset_vector_tool_frame = np.array([0.0, 0.0, self.tcp_offset])
+        
+        # Transform offset vector from tool frame to world frame using quaternion
+        # The quaternion represents the rotation from tool frame to world frame
+        r = R.from_quat(quaternion)
+        offset_vector_world = r.apply(offset_vector_tool_frame)
+        
+        # Compute offset point: TCP + offset_vector_world
+        # (going forward from TCP to fingertips along the tool Z-axis)
+        offset_point = np.array(tcp_position) + offset_vector_world
+        
+        return offset_point.tolist()
+    
+    def compute_tcp_from_offset_point(self, offset_point, quaternion):
+        """Compute TCP position from offset point using spherical flexure joint concept
+        (Same as URSim TCP control)
+        
+        The offset vector is defined in the tool frame (gripper frame) and then
+        transformed to world frame using the tool orientation quaternion.
+        This implements the spherical flexure joint: the offset point (fingertips) 
+        remains fixed while the TCP moves as the tool rotates.
+        
+        Args:
+            offset_point: Position of the offset point (fingertips) in world frame [x, y, z]
+            quaternion: TCP/tool orientation quaternion [x, y, z, w] (tool frame to world frame)
+        
+        Returns:
+            tcp_position: TCP position in world frame [x, y, z]
+        """
+        # Offset vector in tool frame (gripper frame): [0, 0, offset_distance]
+        # In tool frame, Z-axis points from TCP to fingertips (downward)
+        offset_vector_tool_frame = np.array([0.0, 0.0, self.tcp_offset])
+        
+        # Transform offset vector from tool frame to world frame using quaternion
+        # The quaternion represents the rotation from tool frame to world frame
+        r = R.from_quat(quaternion)
+        offset_vector_world = r.apply(offset_vector_tool_frame)
+        
+        # Compute TCP position: offset_point - offset_vector_world
+        # (going backwards from fingertips to TCP along the tool Z-axis)
+        tcp_position = np.array(offset_point) - offset_vector_world
+        
+        return tcp_position.tolist()
         
     def quaternion_to_rpy(self, x, y, z, w):
         """Convert quaternion to roll, pitch, yaw in degrees"""
@@ -382,38 +457,46 @@ class DirectObjectMove(Node):
             self.selected_grasp_point = None
     
     def grasp_candidates_callback(self, msg):
-        """Handle GraspPointArray message and find target grasp candidate (new mode)"""
+        """Handle GraspPointArray message and find target grasp candidate"""
         if GraspPointArray is None:
             return
         
         # Store all grasp candidates
         self.latest_grasp_candidates = msg
         
+        # Calculate expected grasp_id: grasp_point_id * 100 + direction_id
+        expected_grasp_id = self.grasp_point_id * 100 + self.direction_id
+        
         # Find the grasp candidate with the specified ID and object name
         target_grasp_candidate = None
-        for grasp_candidate in msg.grasp_points:  # Note: candidates also use GraspPointArray format
-            if (grasp_candidate.grasp_id == self.grasp_candidate_id and 
+        for grasp_candidate in msg.grasp_points:
+            if (grasp_candidate.grasp_id == expected_grasp_id and 
                 grasp_candidate.object_name == self.object_name):
                 target_grasp_candidate = grasp_candidate
                 break
         
         if target_grasp_candidate is not None:
             self.selected_grasp_candidate = target_grasp_candidate
-            self.get_logger().info(f"🎯 Found grasp candidate {self.grasp_candidate_id} for object '{self.object_name}'")
-            self.get_logger().info(f"🎯 Candidate orientation (RPY): [{target_grasp_candidate.roll:.1f}, {target_grasp_candidate.pitch:.1f}, {target_grasp_candidate.yaw:.1f}]")
+            self.get_logger().info(f"🎯 Found grasp candidate: grasp_point_id {self.grasp_point_id}, direction_id {self.direction_id} (grasp_id {expected_grasp_id}) for object '{self.object_name}'")
             # Unsubscribe after getting the grasp candidate once (simulation data is accurate)
             if self.grasp_candidates_sub is not None:
                 self.destroy_subscription(self.grasp_candidates_sub)
                 self.grasp_candidates_sub = None
         else:
             # Grasp candidate not found in this message
-            self.get_logger().warn(f"Grasp candidate {self.grasp_candidate_id} for object '{self.object_name}' not found in current message")
+            self.get_logger().warn(f"Grasp candidate: grasp_point_id {self.grasp_point_id}, direction_id {self.direction_id} (grasp_id {expected_grasp_id}) for object '{self.object_name}' not found in current message")
             self.selected_grasp_candidate = None
     
     def ee_pose_callback(self, msg: PoseStamped):
         """Callback for end-effector pose data"""
         self.current_ee_pose = msg
         self.ee_pose_received = True
+    
+    def joint_state_callback(self, msg):
+        """Update current joint angles for IK seeding (same as URSim TCP control)"""
+        from sensor_msgs.msg import JointState
+        if len(msg.position) >= 6:
+            self.current_joint_angles = list(msg.position)
     
     def timer_callback(self):
         """Process pose and perform single direct movement to object"""
@@ -437,9 +520,10 @@ class DirectObjectMove(Node):
             self.current_ee_pose.pose.position.z
         ])
         
-        # Initialize variables for flexure joint behavior
-        use_flexure_joint = False  # Default: not using flexure joint
-        fingertips_position = None  # Will be set when using grasp candidates
+        # Initialize variables
+        offset_point = None
+        target_quaternion = None
+        rpy = None
         
         # Check if we have optional target position/orientation
         if self.target_xyz is not None and self.target_xyzw is not None:
@@ -454,60 +538,61 @@ class DirectObjectMove(Node):
                 self.target_xyzw[0], self.target_xyzw[1], 
                 self.target_xyzw[2], self.target_xyzw[3]
             )
+            target_quaternion = np.array(self.target_xyzw)
+            # For provided target, offset point is the same as object position
+            offset_point = object_position
             self.get_logger().info(f"🎯 Using provided target position: {object_position} (with calibration offset applied) and orientation: {rpy}")
         elif self.selected_grasp_candidate is not None:
-            # Use grasp candidate position (fingertips/grasp point) and orientation directly from the message
-            # The grasp candidate position is the FIXED fingertips position (grasp point)
-            fingertips_position = np.array([
+            # Use grasp candidate position and orientation directly from the message
+            # The grasp candidate position is where the fingertips should be (offset point)
+            offset_point = np.array([
                 self.selected_grasp_candidate.pose.position.x,
                 self.selected_grasp_candidate.pose.position.y,
                 self.selected_grasp_candidate.pose.position.z
             ])
             
             # Apply calibration offset to correct systematic detection bias
-            fingertips_position[0] += self.calibration_offset_x  # Correct X offset
-            fingertips_position[1] += self.calibration_offset_y  # Correct Y offset
+            offset_point[0] += self.calibration_offset_x  # Correct X offset
+            offset_point[1] += self.calibration_offset_y  # Correct Y offset
+            
+            # Get the gripper orientation from the grasp candidate
+            target_quaternion = np.array([
+                self.selected_grasp_candidate.pose.orientation.x,
+                self.selected_grasp_candidate.pose.orientation.y,
+                self.selected_grasp_candidate.pose.orientation.z,
+                self.selected_grasp_candidate.pose.orientation.w
+            ])
             
             # Use the provided RPY values directly from the grasp candidate message
-            # This orientation will be used to calculate TCP position from fingertips
             roll = self.selected_grasp_candidate.roll
             pitch = self.selected_grasp_candidate.pitch
             yaw = self.selected_grasp_candidate.yaw
             
-            # Convert RPY to quaternion
-            r_base = R.from_euler('xyz', [roll, pitch, yaw], degrees=True)
-            quat_base = r_base.as_quat()  # Returns [x, y, z, w]
+            rpy = [roll, pitch, yaw]
             
-            # Apply orientation offset quaternion
-            r_offset = R.from_quat(self.orientation_offset)
-            r_final = r_offset * r_base  # Compose rotations: offset * base
-            quat_final = r_final.as_quat()
-            
-            # Convert back to RPY
-            rpy = r_final.as_euler('xyz', degrees=True).tolist()
-            
-            # For flexure joint behavior: fingertips are FIXED, TCP will be calculated from orientation
-            object_position = fingertips_position  # Use fingertips as reference for logging
-            
-            self.get_logger().info(f"🎯 Using grasp candidate {self.grasp_candidate_id}")
-            self.get_logger().info(f"   Fingertips position (FIXED): {fingertips_position} (with calibration offset applied)")
-            self.get_logger().info(f"   Original orientation (RPY): [{roll:.1f}, {pitch:.1f}, {yaw:.1f}] degrees")
-            self.get_logger().info(f"   Orientation offset (quat): [{self.orientation_offset[0]:.3f}, {self.orientation_offset[1]:.3f}, {self.orientation_offset[2]:.3f}, {self.orientation_offset[3]:.3f}]")
-            self.get_logger().info(f"   Final orientation (RPY): [{rpy[0]:.1f}, {rpy[1]:.1f}, {rpy[2]:.1f}] degrees")
-            
-            # Set flag to indicate we're using grasp candidate (for flexure joint behavior)
-            use_flexure_joint = True
+            self.get_logger().info(f"🎯 Using grasp candidate: grasp_point_id {self.grasp_point_id}, direction_id {self.direction_id}")
+            self.get_logger().info(f"🎯 Offset point (fingertips) position: {offset_point} (with calibration offset applied)")
+            self.get_logger().info(f"🎯 Grasp candidate orientation (RPY): [{roll:.1f}, {pitch:.1f}, {yaw:.1f}] degrees")
         elif self.selected_grasp_point is not None:
-            # Use grasp point position and orientation directly from the message
-            object_position = np.array([
+            # Use grasp point position and orientation directly from the message (legacy mode)
+            # The grasp point position is where the fingertips should be (offset point)
+            offset_point = np.array([
                 self.selected_grasp_point.pose.position.x,
                 self.selected_grasp_point.pose.position.y,
                 self.selected_grasp_point.pose.position.z
             ])
             
             # Apply calibration offset to correct systematic detection bias
-            object_position[0] += self.calibration_offset_x  # Correct X offset
-            object_position[1] += self.calibration_offset_y  # Correct Y offset
+            offset_point[0] += self.calibration_offset_x  # Correct X offset
+            offset_point[1] += self.calibration_offset_y  # Correct Y offset
+            
+            # Get the gripper orientation from the grasp point
+            target_quaternion = np.array([
+                self.selected_grasp_point.pose.orientation.x,
+                self.selected_grasp_point.pose.orientation.y,
+                self.selected_grasp_point.pose.orientation.z,
+                self.selected_grasp_point.pose.orientation.w
+            ])
             
             # Use the provided RPY values directly from the grasp point message
             roll = self.selected_grasp_point.roll
@@ -516,10 +601,8 @@ class DirectObjectMove(Node):
             
             rpy = [roll, pitch, yaw]
             
-            # Not using flexure joint for legacy grasp points
-            use_flexure_joint = False
-            
-            self.get_logger().info(f"🎯 Using grasp point {self.grasp_id} position: {object_position} (with calibration offset applied)")
+            self.get_logger().info(f"🎯 Using grasp point {self.grasp_id} (legacy mode)")
+            self.get_logger().info(f"🎯 Offset point (fingertips) position: {offset_point} (with calibration offset applied)")
             self.get_logger().info(f"🎯 Grasp point orientation (RPY): [{roll:.1f}, {pitch:.1f}, {yaw:.1f}] degrees")
         elif self.latest_pose is not None:
             # Use detected object pose
@@ -545,8 +628,12 @@ class DirectObjectMove(Node):
             object_position[0] += self.calibration_offset_x  # Correct X offset
             object_position[1] += self.calibration_offset_y  # Correct Y offset
             
-            # Not using flexure joint for detected object pose
-            use_flexure_joint = False
+            # Convert RPY to quaternion for object center mode
+            r = R.from_euler('xyz', [np.deg2rad(rpy[0]), np.deg2rad(rpy[1]), np.deg2rad(rpy[2])], degrees=False)
+            target_quaternion = r.as_quat()
+            
+            # For object center mode, offset point is the object position
+            offset_point = object_position
             
             self.get_logger().info(f"🎯 Detected object at ({object_position[0]:.3f}, {object_position[1]:.3f}, {object_position[2]:.3f})")
         else:
@@ -554,63 +641,23 @@ class DirectObjectMove(Node):
             self.get_logger().warn("No target position provided and no object detected")
             return
         
-        # Calculate direction vector from object to current end-effector
-        direction_vector = current_ee_position - object_position
-        current_distance = np.linalg.norm(direction_vector)
+        # Now compute TCP position from offset point using spherical flexure joint concept
+        # (Same as URSim TCP control: the offset point acts as a fixed point in space)
+        # 
+        # Spherical flexure joint concept:
+        # - The offset point (fingertips) is fixed at the grasp point/candidate position
+        # - When gripper orientation changes, TCP position moves to keep offset point fixed
+        # - This allows rotation around the offset point (like a spherical joint)
+        #
+        # We use the same helper functions as URSim TCP control:
+        # - compute_tcp_from_offset_point(offset_point, quaternion) -> tcp_position
         
-        self.get_logger().info(f"📏 Current distance between object and EE: {current_distance*100:.2f} cm")
-        self.get_logger().info(f"📍 Current EE position: ({current_ee_position[0]:.3f}, {current_ee_position[1]:.3f}, {current_ee_position[2]:.3f})")
-        self.get_logger().info(f"📍 Object position: ({object_position[0]:.3f}, {object_position[1]:.3f}, {object_position[2]:.3f})")
-        
-        # Determine approach direction
-        # If using a grasp candidate or grasp point, use the approach vector from the orientation
-        # Otherwise, use the direction from object to current EE (or default upward)
-        approach_direction = None
-        
-        if self.selected_grasp_candidate is not None:
-            # Use approach vector from grasp candidate orientation
-            # The approach vector is the Z-axis of the grasp candidate frame
-            # Convert quaternion to rotation matrix and extract Z-axis direction
-            candidate_quat = np.array([
-                self.selected_grasp_candidate.pose.orientation.x,
-                self.selected_grasp_candidate.pose.orientation.y,
-                self.selected_grasp_candidate.pose.orientation.z,
-                self.selected_grasp_candidate.pose.orientation.w
-            ])
-            r = R.from_quat(candidate_quat)
-            # Z-axis in grasp frame is [0, 0, 1], transform to base frame
-            z_axis_grasp = np.array([0.0, 0.0, 1.0])
-            approach_direction = r.apply(z_axis_grasp)
-            approach_direction = approach_direction / np.linalg.norm(approach_direction)  # Normalize
-            self.get_logger().info(f"🎯 Using grasp candidate approach direction: ({approach_direction[0]:.3f}, {approach_direction[1]:.3f}, {approach_direction[2]:.3f})")
-        elif self.selected_grasp_point is not None:
-            # Use approach vector from grasp point orientation (legacy mode)
-            # The approach vector is the Z-axis of the grasp point frame
-            # Convert quaternion to rotation matrix and extract Z-axis direction
-            grasp_quat = np.array([
-                self.selected_grasp_point.pose.orientation.x,
-                self.selected_grasp_point.pose.orientation.y,
-                self.selected_grasp_point.pose.orientation.z,
-                self.selected_grasp_point.pose.orientation.w
-            ])
-            r = R.from_quat(grasp_quat)
-            # Z-axis in grasp frame is [0, 0, 1], transform to base frame
-            z_axis_grasp = np.array([0.0, 0.0, 1.0])
-            approach_direction = r.apply(z_axis_grasp)
-            approach_direction = approach_direction / np.linalg.norm(approach_direction)  # Normalize
-            self.get_logger().info(f"🎯 Using grasp point approach direction: ({approach_direction[0]:.3f}, {approach_direction[1]:.3f}, {approach_direction[2]:.3f})")
-        elif current_distance > 1e-6:
-            # Use direction from object to current EE
-            approach_direction = direction_vector / current_distance
-            self.get_logger().info(f"🎯 Using current EE direction: ({approach_direction[0]:.3f}, {approach_direction[1]:.3f}, {approach_direction[2]:.3f})")
-        else:
-            # Default to upward direction
-            approach_direction = np.array([0.0, 0.0, 1.0])
-            self.get_logger().warn("Current distance is very small, using default upward direction")
-        
-        # If height is explicitly specified, use that exact height (ignore offset)
         if self.height is not None:
-            # Use specified height directly, maintaining x-y position above/below object
+            # Height explicitly specified: use that exact height (ignore offset)
+            # Note: This mode doesn't use offset_point, so we need object_position
+            if 'object_position' not in locals():
+                # Fallback: use offset_point if object_position not available
+                object_position = offset_point
             target_ee_position = np.array([
                 object_position[0],
                 object_position[1],
@@ -618,120 +665,94 @@ class DirectObjectMove(Node):
             ])
             self.get_logger().info(f"📏 Using specified height={self.height:.3f}m (offset ignored)")
         else:
-            # Flexure joint behavior: FINGERTIPS (grasp point) is FIXED, TCP moves in a sphere
-            # The TCP position is calculated from the fingertips position using the orientation
-            # This simulates a spherical flexure joint where the gripper can rotate around the fingertips
-            # 
-            # The gripper extends 0.115m from TCP along the gripper's Z-axis (points FROM TCP TO fingertips)
-            # To keep fingertips at the grasp point, we calculate:
-            #   TCP_position = fingertips - (gripper_z_axis_in_base_frame × 0.115m)
-            #
-            # Where gripper_z_axis is transformed to base frame using candidate's RPY orientation
-            # This ensures the gripper fingertips are always at the grasp point while TCP moves in a sphere
-            #
-            # Mathematical model (Flexure Joint):
-            #   Fingertips (grasp_point) = FIXED for all candidates
-            #   TCP_position = fingertips - R(rpy) × [0, 0, 1] × 0.115m  [VARIES based on orientation]
-            #   EE_orientation = from candidate RPY  [VARIES per candidate]
-            #
-            # Examples:
-            #   RPY (0, 180, 0) -> gripper points down -> TCP = fingertips - [0, 0, -1]×0.115 = fingertips + [0, 0, 0.115]
-            #   RPY (90, 0, 0) -> gripper horizontal -> TCP = fingertips - [1, 0, 0]×0.115 = fingertips + [-0.115, 0, 0]
+            # Use TCP offset calculation: offset_point is where fingertips should be
+            # Compute TCP position from offset point using the same logic as URSim TCP control
+            # IMPORTANT: The target_quaternion (from grasp candidate's approach_quaternion) affects BOTH:
+            #   1. The gripper orientation (used in IK)
+            #   2. The TCP position (computed from offset point using the quaternion)
+            # This implements the spherical flexure joint: when orientation changes, TCP moves to keep offset point fixed
+            target_tcp_position = self.compute_tcp_from_offset_point(offset_point, target_quaternion)
+            target_ee_position = np.array(target_tcp_position)
             
-            if use_flexure_joint:
-                # Get fingertips position (grasp point) - this is FIXED
-                # fingertips_position is already set from grasp candidate
-                
-                # Convert RPY to rotation matrix (from grasp candidate orientation)
-                r_candidate = R.from_euler('xyz', rpy, degrees=True)
-                
-                # Gripper Z-axis vector in gripper frame (points FROM TCP TO fingertips)
-                gripper_z_axis = np.array([0.0, 0.0, 1.0])
-                
-                # Transform gripper Z-axis to base frame using candidate orientation
-                gripper_z_base = r_candidate.apply(gripper_z_axis)
-                
-                # TCP position = fingertips - (gripper_z_axis × offset)
-                # This keeps fingertips FIXED while TCP moves in a sphere
-                # Since gripper_z_base points FROM TCP TO fingertips, we subtract to get TCP position
-                target_ee_position = fingertips_position - gripper_z_base * self.object_to_ee_offset
-                
-                self.get_logger().info(f"📏 Flexure joint: Fingertips FIXED at grasp point, TCP moves in sphere")
-                self.get_logger().info(f"   Fingertips position: ({fingertips_position[0]:.3f}, {fingertips_position[1]:.3f}, {fingertips_position[2]:.3f}) m")
-                self.get_logger().info(f"   Gripper Z-axis in base frame: ({gripper_z_base[0]:.3f}, {gripper_z_base[1]:.3f}, {gripper_z_base[2]:.3f})")
-                self.get_logger().info(f"   TCP offset: {self.object_to_ee_offset*100:.1f}cm from fingertips")
+            # Get gripper Z-axis for logging (this is the direction from TCP to fingertips)
+            z_axis_gripper_local = np.array([0.0, 0.0, 1.0])
+            r_gripper = R.from_quat(target_quaternion)
+            z_axis_gripper_world = r_gripper.apply(z_axis_gripper_local)
+            z_axis_gripper_world = z_axis_gripper_world / np.linalg.norm(z_axis_gripper_world)  # Normalize
+            
+            # Calculate the offset vector in world frame (shows how quaternion affects TCP position)
+            offset_vector_world = self.tcp_offset * z_axis_gripper_world
+            
+            self.get_logger().info(f"📏 Offset point (fingertips) position: ({offset_point[0]:.3f}, {offset_point[1]:.3f}, {offset_point[2]:.3f})")
+            self.get_logger().info(f"📏 Target gripper orientation (quaternion): [{target_quaternion[0]:.4f}, {target_quaternion[1]:.4f}, {target_quaternion[2]:.4f}, {target_quaternion[3]:.4f}]")
+            self.get_logger().info(f"📏 Gripper Z-axis direction (TCP to fingertips): ({z_axis_gripper_world[0]:.3f}, {z_axis_gripper_world[1]:.3f}, {z_axis_gripper_world[2]:.3f})")
+            self.get_logger().info(f"📏 Offset vector in world frame (from quaternion): ({offset_vector_world[0]:.3f}, {offset_vector_world[1]:.3f}, {offset_vector_world[2]:.3f})")
+            self.get_logger().info(f"📏 TCP offset: {self.tcp_offset*100:.1f}cm along gripper Z-axis")
+            self.get_logger().info(f"🎯 Target TCP position: ({target_ee_position[0]:.3f}, {target_ee_position[1]:.3f}, {target_ee_position[2]:.3f})")
+            self.get_logger().info(f"💡 Note: TCP position = offset_point - offset_vector, where offset_vector depends on quaternion orientation")
+            
+            # Verify the distance
+            calculated_distance = np.linalg.norm(target_ee_position - offset_point)
+            self.get_logger().info(f"✅ Calculated distance from TCP to offset point: {calculated_distance*100:.2f} cm")
+            
+            # Verify that we can compute the offset point back from TCP (round-trip check)
+            computed_offset = self.compute_offset_point(target_ee_position, target_quaternion)
+            offset_error = np.linalg.norm(np.array(computed_offset) - offset_point)
+            if offset_error > 0.001:  # 1mm tolerance
+                self.get_logger().warn(f"⚠️ Round-trip offset calculation error: {offset_error*1000:.2f}mm (should be < 1mm)")
             else:
-                # Legacy behavior: use approach direction for non-grasp-candidate cases
-                # This maintains backward compatibility
-                if approach_direction is not None:
-                    target_ee_position = object_position + approach_direction * self.object_to_ee_offset
-                    self.get_logger().info(f"📏 Approach-based offset: TCP = object + approach_vector × {self.object_to_ee_offset*100:.1f}cm")
-                else:
-                    # Default: maintain current distance
-                    target_ee_position = object_position + direction_vector / current_distance * self.object_to_ee_offset
-                    self.get_logger().info(f"📏 Maintaining {self.object_to_ee_offset*100:.1f}cm offset from object/grasp point")
+                self.get_logger().info(f"✅ Round-trip offset verification passed: error = {offset_error*1000:.3f}mm")
         
-        # Verify the target distance (from fingertips to TCP)
-        if use_flexure_joint:
-            # Use fingertips_position for distance calculation when using grasp candidates
-            calculated_distance = np.linalg.norm(target_ee_position - fingertips_position)
-            self.get_logger().info(f"✅ Calculated TCP distance from fingertips: {calculated_distance*100:.2f} cm (should be {self.object_to_ee_offset*100:.1f}cm)")
-        else:
-            # For other cases, use object_position
-            calculated_distance = np.linalg.norm(target_ee_position - object_position)
-            self.get_logger().info(f"✅ Calculated target distance: {calculated_distance*100:.2f} cm")
+        # Compute IK directly using quaternion (same as URSim TCP control)
+        # This ensures the full orientation from the grasp candidate is used
+        # Get current joint angles as seed for better convergence (same as URSim TCP control)
+        q_guess = self.current_joint_angles if self.current_joint_angles is not None else None
         
-        self.get_logger().info(f"🎯 Final target EE position: ({target_ee_position[0]:.3f}, {target_ee_position[1]:.3f}, {target_ee_position[2]:.3f})")
+        # Compute IK using quaternion (full orientation, not just RPY)
+        # This is the same approach as URSim TCP control
+        self.get_logger().info(f"🔧 Computing IK for TCP position: ({target_ee_position[0]:.3f}, {target_ee_position[1]:.3f}, {target_ee_position[2]:.3f})")
+        self.get_logger().info(f"🔧 Using quaternion orientation: [{target_quaternion[0]:.4f}, {target_quaternion[1]:.4f}, {target_quaternion[2]:.4f}, {target_quaternion[3]:.4f}]")
         
-        # Create target pose with calculated position
-        target_position = target_ee_position.tolist()
-        target_pose = (target_position, rpy)
+        joint_angles = compute_ik_quaternion_robust(
+            target_ee_position.tolist(),
+            target_quaternion.tolist(),
+            max_tries=5,
+            dx=0.001,
+            multiple_seeds=True,
+            q_guess=q_guess
+        )
         
-        # Use the calculated z-coordinate (which is either the specified height or the auto-calculated one)
-        # Use hover_arbitrary_orientation for grasp candidates (supports arbitrary orientations)
-        # Use hover_over_grasp for legacy grasp points (forces pitch=180)
-        if self.selected_grasp_candidate is not None:
-            self.get_logger().info(f"🤖 Using arbitrary orientation mode for grasp candidate")
-            trajectory = hover_arbitrary_orientation(target_pose, target_ee_position[2], self.movement_duration)
-        else:
-            self.get_logger().info(f"🤖 Using legacy top-down mode (pitch=180)")
-            trajectory = hover_over_grasp(target_pose, target_ee_position[2], self.movement_duration)
+        if joint_angles is None:
+            self.get_logger().error(f"❌ IK failed for target position and orientation")
+            self.trajectory_in_progress = False
+            self.movement_completed = True
+            self.should_exit = True
+            return
         
-        # Store trajectory for sequential execution
-        self.current_trajectory = trajectory
-        self.current_trajectory_step = 1  # Start with step 1
+        self.get_logger().info(f"✅ IK solved successfully")
+        
+        # Create trajectory point using the computed joint angles
+        trajectory_point = make_point(joint_angles, self.movement_duration)
+        trajectory = {
+            "traj1": [trajectory_point]
+        }
         
         # Execute trajectory
         self.trajectory_in_progress = True  # Mark trajectory as in progress
-        self.execute_trajectory(trajectory, step=1)
+        self.execute_trajectory(trajectory)
         # Don't set movement_completed or should_exit here - wait for trajectory completion
     
-    def execute_trajectory(self, trajectory, step=1):
-        """Execute trajectory using ROS2 action
-        
-        Args:
-            trajectory: Dictionary with 'traj1' and optionally 'traj2' keys
-            step: Which trajectory step to execute (1 or 2)
-        """
+    def execute_trajectory(self, trajectory):
+        """Execute trajectory using ROS2 action"""
         try:
-            traj_key = f'traj{step}'
-            if traj_key not in trajectory or not trajectory[traj_key]:
-                if step == 1:
-                    self.get_logger().error("No trajectory found")
-                    return
-                else:
-                    # No traj2, so we're done after traj1
-                    self.get_logger().info("Single-step trajectory (no reorientation step)")
-                    return
+            if 'traj1' not in trajectory or not trajectory['traj1']:
+                self.get_logger().error("No trajectory found")
+                return
             
-            point = trajectory[traj_key][0]
+            
+            point = trajectory['traj1'][0]
             positions = point['positions']
             duration = point['time_from_start'].sec
-            
-            if step == 1:
-                self.get_logger().info(f"🤖 Step {step}: Moving to position with gripper pointing down...")
-            else:
-                self.get_logger().info(f"🤖 Step {step}: Reorienting to target orientation (spherical joint rotation)...")
             
             # Create trajectory message
             traj_msg = JointTrajectory()
@@ -779,38 +800,17 @@ class DirectObjectMove(Node):
     def goal_result(self, future):
         """Handle goal result"""
         result = future.result()
+        self.trajectory_in_progress = False  # Clear trajectory in progress flag
         
         if result.status == 4:  # SUCCEEDED
-            if self.current_trajectory_step == 1:
-                self.get_logger().info("✅ Step 1 completed: Position reached with gripper pointing down")
-                
-                # Check if there's a second trajectory step (reorientation)
-                if self.current_trajectory and 'traj2' in self.current_trajectory and self.current_trajectory['traj2']:
-                    # Execute step 2: Reorient to target orientation
-                    self.current_trajectory_step = 2
-                    self.get_logger().info("🔄 Starting Step 2: Reorienting to target orientation...")
-                    self.execute_trajectory(self.current_trajectory, step=2)
-                    return  # Don't exit yet, wait for step 2
-                else:
-                    # No step 2, we're done
-                    self.trajectory_in_progress = False
-                    self.movement_completed = True
-                    self.should_exit = True
-                    self.get_logger().info("✅ Direct movement completed. Exiting.")
-            else:
-                # Step 2 completed
-                self.get_logger().info("✅ Step 2 completed: Reoriented to target orientation")
-                self.trajectory_in_progress = False
-                self.movement_completed = True
-                self.should_exit = True
-                self.get_logger().info("✅ Direct movement completed. Exiting.")
+            self.get_logger().info("✅ Trajectory completed successfully")
         else:
             self.get_logger().error(f"Trajectory failed with status: {result.status}")
-            # Set exit flags on failure
-            self.trajectory_in_progress = False
-            self.movement_completed = True
-            self.should_exit = True
-            self.get_logger().error("❌ Movement failed. Exiting.")
+        
+        # Set exit flags after trajectory completes
+        self.movement_completed = True
+        self.should_exit = True
+        self.get_logger().info("✅ Direct movement completed. Exiting.")
 
 
 def main(args=None):
@@ -831,15 +831,13 @@ def main(args=None):
     parser.add_argument('--grasp-points-topic', type=str, default="/grasp_points",
                        help='Topic name for grasp points subscription (legacy mode)')
     parser.add_argument('--grasp-id', type=int, default=None,
-                       help='Specific grasp point ID to use (legacy mode - forces pitch=180, top-down only)')
+                       help='Specific grasp point ID to use (legacy mode, if provided, will use grasp point instead of object center)')
     parser.add_argument('--grasp-candidates-topic', type=str, default="/grasp_candidates",
-                       help='Topic name for grasp candidates subscription (new mode with arbitrary orientations)')
-    parser.add_argument('--grasp-candidate-id', type=int, default=None,
-                       help='Specific grasp candidate ID to use (new mode - supports arbitrary orientations)')
-    parser.add_argument('--gripper-offset', type=float, default=0.115,
-                       help='Gripper offset distance from TCP to fingertips in meters (default: 0.115)')
-    parser.add_argument('--orientation-offset', type=float, nargs=4, default=[0.0, 1.0, 0.0, 0.0],
-                       help='Orientation offset quaternion [x, y, z, w] to apply to grasp candidate orientations (default: [0, 1, 0, 0] = 180° rotation around Y-axis)')
+                       help='Topic name for grasp candidates subscription')
+    parser.add_argument('--grasp-point-id', type=int, default=None,
+                       help='Grasp point ID for candidate selection (use with --direction-id)')
+    parser.add_argument('--direction-id', type=int, default=None,
+                       help='Direction ID for candidate selection (use with --grasp-point-id)')
     
     # Parse arguments from sys.argv if args is None
     if args is None:
@@ -848,14 +846,19 @@ def main(args=None):
         args = parser.parse_args(args)
     
     rclpy.init(args=None)
-    node = DirectObjectMove(topic_name=args.topic, object_name=args.object_name, 
-                      height=args.height, movement_duration=args.movement_duration,
-                      target_xyz=args.target_xyz, target_xyzw=args.target_xyzw,
-                      grasp_points_topic=args.grasp_points_topic, grasp_id=args.grasp_id,
-                      grasp_candidates_topic=args.grasp_candidates_topic, 
-                      grasp_candidate_id=args.grasp_candidate_id,
-                      gripper_offset=args.gripper_offset,
-                      orientation_offset=args.orientation_offset)
+    node = DirectObjectMove(
+        topic_name=args.topic, 
+        object_name=args.object_name, 
+        height=args.height, 
+        movement_duration=args.movement_duration,
+        target_xyz=args.target_xyz, 
+        target_xyzw=args.target_xyzw,
+        grasp_points_topic=args.grasp_points_topic, 
+        grasp_id=args.grasp_id,
+        grasp_candidates_topic=args.grasp_candidates_topic,
+        grasp_point_id=args.grasp_point_id,
+        direction_id=args.direction_id
+    )
     
     try:
         while rclpy.ok() and not node.should_exit:

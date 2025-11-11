@@ -12,6 +12,7 @@ import math
 import numpy as np
 from pathlib import Path
 from typing import List, Dict, Any
+from scipy.spatial.transform import Rotation
 
 # Define all possible approach vectors (normalized directions)
 # 6 cardinal directions + 12 intermediate directions = 18 total
@@ -80,6 +81,96 @@ def calculate_grasp_candidate_position(grasp_point_pos: Dict[str, float]) -> Dic
     }
 
 
+def approach_vector_to_quaternion(approach_vec: Dict[str, float]) -> Dict[str, float]:
+    """
+    Convert an approach vector (direction) to a quaternion.
+    
+    The approach vector represents the direction from which we approach the grasp point.
+    This function creates a rotation where the Z-axis (in the local frame) aligns with
+    the approach vector direction.
+    
+    Args:
+        approach_vec: Dictionary with 'x', 'y', 'z' keys representing the approach direction
+    
+    Returns:
+        Dictionary with 'x', 'y', 'z', 'w' keys representing the quaternion
+    """
+    # Get approach vector as numpy array
+    approach = np.array([approach_vec['x'], approach_vec['y'], approach_vec['z']])
+    approach = approach / np.linalg.norm(approach)  # Normalize
+    
+    # Reference direction (Z-axis in local frame)
+    z_axis_ref = np.array([0.0, 0.0, 1.0])
+    
+    # Construct rotation matrix where Z-axis aligns with approach vector
+    # We need to find two perpendicular vectors to complete the frame
+    if abs(approach[2]) < 0.9:
+        # Not too close to Z-axis, use cross product with Z-axis
+        x_axis_local = np.cross(z_axis_ref, approach)
+        if np.linalg.norm(x_axis_local) < 1e-6:
+            # Vectors are parallel, use X-axis as reference
+            x_axis_local = np.array([1.0, 0.0, 0.0])
+        else:
+            x_axis_local = x_axis_local / np.linalg.norm(x_axis_local)
+        y_axis_local = np.cross(approach, x_axis_local)
+        y_axis_local = y_axis_local / np.linalg.norm(y_axis_local)
+        x_axis_local = np.cross(y_axis_local, approach)
+        x_axis_local = x_axis_local / np.linalg.norm(x_axis_local)
+    else:
+        # Close to Z-axis, use X-axis as reference
+        x_axis_local = np.array([1.0, 0.0, 0.0])
+        y_axis_local = np.cross(approach, x_axis_local)
+        y_axis_local = y_axis_local / np.linalg.norm(y_axis_local)
+        x_axis_local = np.cross(y_axis_local, approach)
+        x_axis_local = x_axis_local / np.linalg.norm(x_axis_local)
+    
+    # Construct rotation matrix: columns are x, y, z axes
+    # The Z-axis column is the approach vector
+    rotation_matrix = np.column_stack([x_axis_local, y_axis_local, approach])
+    
+    # Convert to quaternion
+    rotation = Rotation.from_matrix(rotation_matrix)
+    quat = rotation.as_quat()  # Returns [x, y, z, w]
+    
+    return {
+        "x": float(quat[0]),
+        "y": float(quat[1]),
+        "z": float(quat[2]),
+        "w": float(quat[3])
+    }
+
+
+def quaternion_to_rpy(quat: Dict[str, float]) -> Dict[str, float]:
+    """
+    Convert quaternion to roll, pitch, yaw (RPY) in degrees.
+    
+    Uses the same convention as grasp_points_publisher: 'xyz' Euler angles in degrees.
+    Normalizes angles to [-180, 180] range for consistency.
+    
+    Args:
+        quat: Dictionary with 'x', 'y', 'z', 'w' keys representing the quaternion
+    
+    Returns:
+        Dictionary with 'roll', 'pitch', 'yaw' keys in degrees (normalized to [-180, 180])
+    """
+    quat_array = np.array([quat['x'], quat['y'], quat['z'], quat['w']])
+    rotation = Rotation.from_quat(quat_array)
+    rpy = rotation.as_euler('xyz', degrees=True)
+    
+    # Normalize angles to [-180, 180] range
+    rpy_normalized = np.array([
+        ((rpy[0] + 180) % 360) - 180,
+        ((rpy[1] + 180) % 360) - 180,
+        ((rpy[2] + 180) % 360) - 180
+    ])
+    
+    return {
+        "roll": float(rpy_normalized[0]),
+        "pitch": float(rpy_normalized[1]),
+        "yaw": float(rpy_normalized[2])
+    }
+
+
 def generate_grasp_candidates_for_file(grasp_file: Path, output_dir: Path):
     """
     Generate grasp candidates for all grasp points in a single JSON file.
@@ -121,16 +212,27 @@ def generate_grasp_candidates_for_file(grasp_file: Path, output_dir: Path):
         
         # Generate a candidate for each approach vector
         for direction_id, approach_vec in enumerate(APPROACH_VECTORS, start=1):
+            # Convert approach vector to quaternion
+            approach_quaternion = approach_vector_to_quaternion(approach_vec)
+            
+            # Convert quaternion to RPY for verification
+            approach_rpy = quaternion_to_rpy(approach_quaternion)
+            
+            # Debug output for first grasp point and first few directions
+            if grasp_point_id == 1 and direction_id <= 6:
+                print(f"    Direction {direction_id} ({approach_vec['name']}): "
+                      f"approach_vec=[{approach_vec['x']:.3f}, {approach_vec['y']:.3f}, {approach_vec['z']:.3f}], "
+                      f"quat=[{approach_quaternion['x']:.3f}, {approach_quaternion['y']:.3f}, "
+                      f"{approach_quaternion['z']:.3f}, {approach_quaternion['w']:.3f}], "
+                      f"RPY=[{approach_rpy['roll']:.2f}°, {approach_rpy['pitch']:.2f}°, {approach_rpy['yaw']:.2f}°]")
+            
             # Create the candidate JSON structure
             candidate_data = {
                 "grasp_point_id": grasp_point_id,
                 "direction_id": direction_id,
                 "grasp_candidate_position": candidate_pos,
-                "approach_vector": {
-                    "x": approach_vec["x"],
-                    "y": approach_vec["y"],
-                    "z": approach_vec["z"]
-                }
+                "approach_quaternion": approach_quaternion,
+                "approach_rpy": approach_rpy  # Add RPY for verification
             }
             
             output_data["grasp_candidates"].append(candidate_data)
