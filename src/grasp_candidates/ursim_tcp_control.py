@@ -74,10 +74,18 @@ class TCPControlNode(Node):
         self.current_rotvec = None
         self.current_joint_angles = None
         
-        # Initial/fixed position for rotation (default to home position)
-        from action_libraries import HOME_POSE_QUATERNION
-        self.fixed_position = HOME_POSE_QUATERNION[0:3]  # [x, y, z]
-        self.fixed_quaternion = None  # Will be set to current quaternion when position is set
+        # TCP offset from end effector (default 0.115 m)
+        # This offset extends from the TCP along the end effector's Z-axis
+        # The sphere flexure principle applies to this offset point
+        self.tcp_offset = 0.115  # meters
+        
+        # Initial/fixed position for rotation (default to grasp point offset point)
+        # This will be the offset point (TCP + offset * Z-axis), not the TCP position
+        # Using grasp point 6, direction 2 offset point: (0.250, -0.525, 0.043)
+        # Default orientation: [1.0, 0.0, 0.0, 0.0] (RPY: [180°, 0°, 0°]) - pointing straight down
+        self.fixed_position = [0.250, -0.525, 0.043]  # Grasp point offset point (fingertips position)
+        self.fixed_quaternion = [1.0, 0.0, 0.0, 0.0]  # Default orientation (pointing straight down)
+        self.get_logger().info(f"Initialized fixed position (offset point) to grasp point: {self.fixed_position}")
         
         # Button states
         self.button_pressed = None
@@ -167,6 +175,51 @@ class TCPControlNode(Node):
         except Exception as e:
             self.get_logger().warn(f"Could not load button data: {e}. Using defaults.")
     
+    def compute_offset_point(self, tcp_position, quaternion):
+        """Compute the offset point from TCP position along end effector Z-axis
+        
+        Args:
+            tcp_position: TCP position [x, y, z]
+            quaternion: TCP orientation [x, y, z, w]
+        
+        Returns:
+            offset_point: Position of the offset point [x, y, z]
+        """
+        # Z-axis in gripper frame points from TCP to fingertips (downward)
+        # In gripper frame: [0, 0, 1] points from TCP to fingertips
+        z_axis_gripper = np.array([0.0, 0.0, 1.0])
+        
+        # Rotate Z-axis to world frame
+        r = Rot.from_quat(quaternion)
+        z_axis_world = r.apply(z_axis_gripper)
+        
+        # Compute offset point: TCP + offset * Z-axis direction
+        offset_point = np.array(tcp_position) + self.tcp_offset * z_axis_world
+        
+        return offset_point.tolist()
+    
+    def compute_tcp_from_offset_point(self, offset_point, quaternion):
+        """Compute TCP position from offset point
+        
+        Args:
+            offset_point: Position of the offset point [x, y, z]
+            quaternion: TCP orientation [x, y, z, w]
+        
+        Returns:
+            tcp_position: TCP position [x, y, z]
+        """
+        # Z-axis in gripper frame points from TCP to fingertips (downward)
+        z_axis_gripper = np.array([0.0, 0.0, 1.0])
+        
+        # Rotate Z-axis to world frame
+        r = Rot.from_quat(quaternion)
+        z_axis_world = r.apply(z_axis_gripper)
+        
+        # Compute TCP position: offset_point - offset * Z-axis direction
+        tcp_position = np.array(offset_point) - self.tcp_offset * z_axis_world
+        
+        return tcp_position.tolist()
+    
     def tcp_pose_callback(self, msg):
         """Update current TCP pose"""
         self.current_position = [msg.pose.position.x, msg.pose.position.y, msg.pose.position.z]
@@ -176,6 +229,14 @@ class TCPControlNode(Node):
             msg.pose.orientation.z,
             msg.pose.orientation.w
         ]
+        
+        # Initialize fixed position to offset point from current TCP if not set
+        # (Note: fixed_position is now pre-set to grasp point, so this may not be called)
+        if self.fixed_position is None:
+            offset_point = self.compute_offset_point(self.current_position, self.current_quaternion)
+            self.fixed_position = offset_point
+            self.fixed_quaternion = list(self.current_quaternion)
+            self.get_logger().info(f"Initialized fixed position (offset point) to: {self.fixed_position} (TCP: {self.current_position})")
         
         # Initialize target quaternion to current if not set
         if self.target_quaternion is None:
@@ -203,25 +264,31 @@ class TCPControlNode(Node):
         }
     
     def set_fixed_position(self, position=None):
-        """Set the fixed position for rotation (defaults to current position)"""
+        """Set the fixed position for rotation (defaults to current offset point)
+        
+        Note: The fixed_position is the offset point (TCP + offset * Z-axis),
+        not the TCP position itself. This is the point around which rotations occur.
+        """
         if position is None:
-            if self.current_position is not None:
-                self.fixed_position = list(self.current_position)  # Make a copy
-                if self.current_quaternion is not None:
-                    self.fixed_quaternion = list(self.current_quaternion)  # Make a copy
-                self.get_logger().info(f"Fixed position set to current: {self.fixed_position}")
+            if self.current_position is not None and self.current_quaternion is not None:
+                # Compute offset point from current TCP position
+                offset_point = self.compute_offset_point(self.current_position, self.current_quaternion)
+                self.fixed_position = list(offset_point)  # Make a copy
+                self.fixed_quaternion = list(self.current_quaternion)  # Make a copy
+                self.get_logger().info(f"Fixed position (offset point) set to: {self.fixed_position} (TCP: {self.current_position})")
                 return True
             else:
                 return False
         else:
+            # If position is provided, it's assumed to be the offset point
             self.fixed_position = list(position)  # Make a copy
             if self.current_quaternion is not None:
                 self.fixed_quaternion = list(self.current_quaternion)  # Make a copy
-            self.get_logger().info(f"Fixed position set to: {self.fixed_position}")
+            self.get_logger().info(f"Fixed position (offset point) set to: {self.fixed_position}")
             return True
     
     def apply_rotation_vector(self, rotvec_delta):
-        """Apply a rotation vector increment around the fixed position"""
+        """Apply a rotation vector increment around the fixed position (offset point)"""
         if self.current_quaternion is None:
             return False
         
@@ -236,14 +303,18 @@ class TCPControlNode(Node):
         r_new = r_current * r_delta
         new_quat = r_new.as_quat()
         
-        # Use fixed position (rotate around this point)
+        # Use fixed position (offset point) - rotate around this point
         if self.fixed_position is None:
-            # Fallback to current position if fixed position not set
+            # Fallback: compute offset point from current TCP position
             if self.current_position is None:
                 return False
-            position = self.current_position
+            offset_point = self.compute_offset_point(self.current_position, self.current_quaternion)
         else:
-            position = self.fixed_position
+            offset_point = self.fixed_position
+        
+        # Compute TCP position from offset point with new orientation
+        # This ensures the offset point remains fixed while rotating
+        tcp_position = self.compute_tcp_from_offset_point(offset_point, new_quat)
         
         # Compute IK with current joint angles as seed for better convergence
         q_guess = self.current_joint_angles if self.current_joint_angles is not None else None
@@ -252,7 +323,7 @@ class TCPControlNode(Node):
         if q_guess is not None:
             from ik_solver import compute_ik_quaternion
             joint_angles = compute_ik_quaternion(
-                position,
+                tcp_position,
                 new_quat,
                 q_guess=q_guess,
                 max_tries=3,
@@ -264,7 +335,7 @@ class TCPControlNode(Node):
         # If that fails, try robust solver
         if joint_angles is None:
             joint_angles = compute_ik_quaternion_robust(
-                position, 
+                tcp_position, 
                 new_quat, 
                 max_tries=3, 
                 dx=0.001, 
@@ -275,8 +346,8 @@ class TCPControlNode(Node):
         if joint_angles is None:
             return False
         
-        # Send trajectory
-        return self.send_trajectory([joint_angles], 0.1)
+        # Send trajectory with 5 second duration to avoid exceeding joint velocity limits
+        return self.send_trajectory([joint_angles], 5.0)
     
     def send_trajectory(self, joint_angles_list, duration):
         """Send trajectory to robot
@@ -324,7 +395,15 @@ class TCPControlNode(Node):
         return True
     
     def interpolate_quaternion_trajectory(self, start_quat, target_quat, position, num_waypoints=10, total_duration=5.0):
-        """Interpolate between start and target quaternions using SLERP, creating intermediate waypoints"""
+        """Interpolate between start and target quaternions using SLERP, creating intermediate waypoints
+        
+        Args:
+            start_quat: Starting quaternion
+            target_quat: Target quaternion
+            position: Offset point position (the point around which rotation occurs)
+            num_waypoints: Number of intermediate waypoints
+            total_duration: Total duration for trajectory
+        """
         if start_quat is None or target_quat is None:
             return None
         
@@ -351,6 +430,10 @@ class TCPControlNode(Node):
             r_interp = slerp([t])[0]
             interp_quat = r_interp.as_quat()
             
+            # Compute TCP position from offset point with interpolated orientation
+            # This ensures the offset point remains fixed while rotating
+            tcp_position = self.compute_tcp_from_offset_point(position, interp_quat)
+            
             # Compute IK for this waypoint
             q_guess = previous_joint_angles if previous_joint_angles is not None else None
             
@@ -358,7 +441,7 @@ class TCPControlNode(Node):
             if q_guess is not None:
                 from ik_solver import compute_ik_quaternion
                 joint_angles = compute_ik_quaternion(
-                    position,
+                    tcp_position,
                     interp_quat,
                     q_guess=q_guess,
                     max_tries=3,
@@ -370,7 +453,7 @@ class TCPControlNode(Node):
             # If that fails, try robust solver
             if joint_angles is None:
                 joint_angles = compute_ik_quaternion_robust(
-                    position,
+                    tcp_position,
                     interp_quat,
                     max_tries=3,
                     dx=0.001,
@@ -415,21 +498,27 @@ class TCPControlNode(Node):
         
         future = self.action_client.send_goal_async(goal)
         
-        # Set fixed position to home after movement
+        # Set fixed position to home offset point after movement
         from action_libraries import HOME_POSE_QUATERNION
-        self.fixed_position = HOME_POSE_QUATERNION[0:3]
-        self.fixed_quaternion = HOME_POSE_QUATERNION[3:7]
+        home_tcp_position = HOME_POSE_QUATERNION[0:3]
+        home_quaternion = HOME_POSE_QUATERNION[3:7]
+        # Compute offset point from home TCP position
+        self.fixed_position = self.compute_offset_point(home_tcp_position, home_quaternion)
+        self.fixed_quaternion = list(home_quaternion)
         
         return True
     
     def move_to_fixed_position(self):
-        """Move robot to the fixed position"""
+        """Move robot to the fixed position (offset point)"""
         if self.fixed_position is None or self.fixed_quaternion is None:
             return False
         
+        # Compute TCP position from offset point
+        tcp_position = self.compute_tcp_from_offset_point(self.fixed_position, self.fixed_quaternion)
+        
         # Compute IK
         joint_angles = compute_ik_quaternion_robust(
-            self.fixed_position,
+            tcp_position,
             self.fixed_quaternion,
             max_tries=5,
             dx=0.001,
@@ -459,18 +548,24 @@ class TCPControlNode(Node):
             self.button_press_start_time = None
     
     def move_to_target_orientation(self):
-        """Move robot to target orientation around fixed position"""
+        """Move robot to target orientation around fixed position (offset point)"""
         if self.target_quaternion is None:
             self.get_logger().warn("No target orientation set")
             return False
         
+        # Get offset point (fixed position)
         if self.fixed_position is None:
             if self.current_position is None:
                 self.get_logger().warn("No fixed position or current position available")
                 return False
-            position = self.current_position
+            # Compute offset point from current TCP position
+            offset_point = self.compute_offset_point(self.current_position, self.current_quaternion)
         else:
-            position = self.fixed_position
+            offset_point = self.fixed_position
+        
+        # Compute TCP position from offset point with target orientation
+        # This ensures the offset point remains fixed while rotating
+        tcp_position = self.compute_tcp_from_offset_point(offset_point, self.target_quaternion)
         
         # Compute IK with current joint angles as seed
         q_guess = self.current_joint_angles if self.current_joint_angles is not None else None
@@ -479,7 +574,7 @@ class TCPControlNode(Node):
         if q_guess is not None:
             from ik_solver import compute_ik_quaternion
             joint_angles = compute_ik_quaternion(
-                position,
+                tcp_position,
                 self.target_quaternion,
                 q_guess=q_guess,
                 max_tries=3,
@@ -491,7 +586,7 @@ class TCPControlNode(Node):
         # If that fails, try robust solver
         if joint_angles is None:
             joint_angles = compute_ik_quaternion_robust(
-                position, 
+                tcp_position, 
                 self.target_quaternion, 
                 max_tries=5, 
                 dx=0.001, 
@@ -653,17 +748,17 @@ class TCPControlUI:
         input_frame.grid(row=0, column=0, columnspan=4, pady=5)
         
         ttk.Label(input_frame, text="X (m):", font=("Arial", 10)).grid(row=0, column=0, padx=5)
-        self.x_var = tk.StringVar(value="0.065")
+        self.x_var = tk.StringVar(value="0.250")  # Grasp point offset point X
         x_entry = ttk.Entry(input_frame, textvariable=self.x_var, width=12, font=("Arial", 10))
         x_entry.grid(row=0, column=1, padx=5)
         
         ttk.Label(input_frame, text="Y (m):", font=("Arial", 10)).grid(row=0, column=2, padx=5)
-        self.y_var = tk.StringVar(value="-0.385")
+        self.y_var = tk.StringVar(value="-0.525")  # Grasp point offset point Y
         y_entry = ttk.Entry(input_frame, textvariable=self.y_var, width=12, font=("Arial", 10))
         y_entry.grid(row=0, column=3, padx=5)
         
         ttk.Label(input_frame, text="Z (m):", font=("Arial", 10)).grid(row=0, column=4, padx=5)
-        self.z_var = tk.StringVar(value="0.481")
+        self.z_var = tk.StringVar(value="0.043")  # Grasp point offset point Z
         z_entry = ttk.Entry(input_frame, textvariable=self.z_var, width=12, font=("Arial", 10))
         z_entry.grid(row=0, column=5, padx=5)
         
@@ -710,17 +805,50 @@ class TCPControlUI:
         )
         move_to_position_btn.grid(row=0, column=2, padx=5, pady=5)
         
-        # Display current fixed position
+        # Display current fixed position (offset point)
         self.fixed_position_label = ttk.Label(
             position_frame, 
-            text="Fixed Position: [0.065, -0.385, 0.481] m (Rotation Point)",
+            text="Fixed Position (Offset Point): [0.250, -0.525, 0.043] m (Rotation Point - Grasp Point)",
             font=("Arial", 10, "italic")
         )
         self.fixed_position_label.grid(row=2, column=0, columnspan=4, pady=5)
         
+        # TCP offset control
+        offset_control_frame = ttk.Frame(position_frame)
+        offset_control_frame.grid(row=3, column=0, columnspan=4, pady=5, sticky=(tk.W, tk.E))
+        
+        ttk.Label(offset_control_frame, text="TCP Offset (m):", font=("Arial", 10)).grid(row=0, column=0, padx=5)
+        
+        # Entry field for precise input
+        self.tcp_offset_var = tk.DoubleVar(value=self.node.tcp_offset)
+        offset_entry = ttk.Entry(offset_control_frame, textvariable=self.tcp_offset_var, width=10, font=("Arial", 10))
+        offset_entry.grid(row=0, column=1, padx=5)
+        offset_entry.bind('<Return>', lambda e: self.update_tcp_offset())
+        offset_entry.bind('<FocusOut>', lambda e: self.update_tcp_offset())
+        
+        # Slider for easy adjustment
+        offset_scale = ttk.Scale(
+            offset_control_frame, 
+            from_=0.0, 
+            to=0.3, 
+            variable=self.tcp_offset_var, 
+            orient=tk.HORIZONTAL, 
+            length=200,
+            command=lambda v: self.update_tcp_offset_from_slider(float(v))
+        )
+        offset_scale.grid(row=0, column=2, padx=5)
+        
+        # Display current offset value
+        self.tcp_offset_label = ttk.Label(
+            offset_control_frame,
+            text=f"Current: {self.node.tcp_offset:.3f} m",
+            font=("Arial", 9, "italic")
+        )
+        self.tcp_offset_label.grid(row=0, column=3, padx=5)
+        
         # RPY input and control section
         rpy_frame = ttk.LabelFrame(main_frame, text="RPY Control (Roll-Pitch-Yaw in Degrees)", padding="10")
-        rpy_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10)
+        rpy_frame.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10)
         
         # RPY input fields
         rpy_input_frame = ttk.Frame(rpy_frame)
@@ -812,7 +940,7 @@ class TCPControlUI:
         
         # Button frame with editable rotation vectors
         button_frame = ttk.LabelFrame(main_frame, text="TCP Orientation Buttons", padding="10")
-        button_frame.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10)
+        button_frame.grid(row=5, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10)
         
         # Create buttons in a grid with editable rotation vector values
         buttons = [
@@ -881,7 +1009,7 @@ class TCPControlUI:
         
         # Target orientation display
         target_frame = ttk.LabelFrame(main_frame, text="Target Orientation", padding="10")
-        target_frame.grid(row=5, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10)
+        target_frame.grid(row=6, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10)
         
         self.target_rpy_label = ttk.Label(target_frame, text="Target RPY: Not set", font=("Arial", 10))
         self.target_rpy_label.grid(row=0, column=0, sticky=tk.W, padx=5)
@@ -917,7 +1045,7 @@ class TCPControlUI:
         
         # Control frame
         control_frame = ttk.LabelFrame(main_frame, text="Controls", padding="10")
-        control_frame.grid(row=6, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10)
+        control_frame.grid(row=7, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10)
         
         # Rotation rate control
         rate_frame = ttk.Frame(control_frame)
@@ -933,7 +1061,7 @@ class TCPControlUI:
         
         # Status
         self.status_label = ttk.Label(main_frame, text="Status: Ready", font=("Arial", 10))
-        self.status_label.grid(row=7, column=0, columnspan=3, pady=10)
+        self.status_label.grid(row=8, column=0, columnspan=3, pady=10)
         
         # Configure grid weights
         self.root.columnconfigure(0, weight=1)
@@ -1010,6 +1138,82 @@ class TCPControlUI:
         except ValueError:
             self.status_label.config(text=f"Status: Invalid rotation vector values for {button_name}")
     
+    def update_tcp_offset(self):
+        """Update TCP offset from entry field"""
+        try:
+            new_offset = float(self.tcp_offset_var.get())
+            if new_offset < 0.0:
+                new_offset = 0.0
+            elif new_offset > 0.3:
+                new_offset = 0.3
+            
+            # Update the node's TCP offset
+            old_offset = self.node.tcp_offset
+            self.node.tcp_offset = new_offset
+            
+            # Recompute fixed position (offset point) if we have current TCP pose
+            if self.node.current_position is not None and self.node.current_quaternion is not None:
+                # Recompute offset point with new offset
+                new_offset_point = self.node.compute_offset_point(
+                    self.node.current_position, 
+                    self.node.current_quaternion
+                )
+                self.node.fixed_position = new_offset_point
+                
+                # Update the entry field to reflect any clamping
+                self.tcp_offset_var.set(new_offset)
+                
+                # Update display
+                self.tcp_offset_label.config(text=f"Current: {new_offset:.3f} m")
+                if self.node.fixed_position:
+                    fixed_pos = self.node.fixed_position
+                    self.fixed_position_label.config(
+                        text=f"Fixed Position (Offset Point): [{fixed_pos[0]:.3f}, {fixed_pos[1]:.3f}, {fixed_pos[2]:.3f}] m (Rotation Point)"
+                    )
+                
+                self.status_label.config(text=f"Status: TCP offset updated from {old_offset:.3f} m to {new_offset:.3f} m")
+            else:
+                # Just update the offset value
+                self.tcp_offset_var.set(new_offset)
+                self.tcp_offset_label.config(text=f"Current: {new_offset:.3f} m")
+                self.status_label.config(text=f"Status: TCP offset set to {new_offset:.3f} m (will apply when TCP pose is available)")
+        except ValueError:
+            # Invalid input, reset to current value
+            self.tcp_offset_var.set(self.node.tcp_offset)
+            self.status_label.config(text="Status: Invalid TCP offset value")
+    
+    def update_tcp_offset_from_slider(self, value):
+        """Update TCP offset from slider (called continuously while dragging)"""
+        try:
+            # Clamp value to valid range
+            if value < 0.0:
+                value = 0.0
+            elif value > 0.3:
+                value = 0.3
+            
+            # Update the node's TCP offset
+            self.node.tcp_offset = value
+            
+            # Recompute fixed position (offset point) if we have current TCP pose
+            if self.node.current_position is not None and self.node.current_quaternion is not None:
+                # Recompute offset point with new offset
+                new_offset_point = self.node.compute_offset_point(
+                    self.node.current_position, 
+                    self.node.current_quaternion
+                )
+                self.node.fixed_position = new_offset_point
+                
+                # Update display
+                self.tcp_offset_label.config(text=f"Current: {value:.3f} m")
+                if self.node.fixed_position:
+                    fixed_pos = self.node.fixed_position
+                    self.fixed_position_label.config(
+                        text=f"Fixed Position (Offset Point): [{fixed_pos[0]:.3f}, {fixed_pos[1]:.3f}, {fixed_pos[2]:.3f}] m (Rotation Point)"
+                    )
+        except Exception as e:
+            # Silently handle errors during slider drag
+            pass
+    
     def adjust_rpy(self, axis, direction):
         """Adjust RPY value by step size, wrapping to [-180, 180] range"""
         try:
@@ -1072,11 +1276,12 @@ class TCPControlUI:
             r = Rot.from_euler('xyz', [roll_rad, pitch_rad, yaw_rad], degrees=False)
             target_quat = r.as_quat()
             
-            # Get position (use fixed position if set, otherwise current)
+            # Get offset point (use fixed position if set, otherwise compute from current TCP)
             if self.node.fixed_position is not None:
-                position = self.node.fixed_position
-            elif self.node.current_position is not None:
-                position = self.node.current_position
+                offset_point = self.node.fixed_position
+            elif self.node.current_position is not None and self.node.current_quaternion is not None:
+                # Compute offset point from current TCP position
+                offset_point = self.node.compute_offset_point(self.node.current_position, self.node.current_quaternion)
             else:
                 self.status_label.config(text="Status: No position available")
                 return
@@ -1087,12 +1292,15 @@ class TCPControlUI:
                 self.status_label.config(text="Status: No current orientation available")
                 return
             
+            # Compute TCP position from offset point with target orientation
+            tcp_position = self.node.compute_tcp_from_offset_point(offset_point, target_quat)
+            
             # Interpolate between current and target quaternions for smooth trajectory
             self.status_label.config(text="Status: Computing smooth trajectory...")
             trajectory_points = self.node.interpolate_quaternion_trajectory(
                 start_quat,
                 target_quat,
-                position,
+                offset_point,  # Pass offset point, not TCP position
                 num_waypoints=15,  # Number of intermediate waypoints
                 total_duration=5.0  # Total duration in seconds
             )
@@ -1104,7 +1312,7 @@ class TCPControlUI:
                 if q_guess is not None:
                     from ik_solver import compute_ik_quaternion
                     joint_angles = compute_ik_quaternion(
-                        position,
+                        tcp_position,
                         target_quat,
                         q_guess=q_guess,
                         max_tries=3,
@@ -1116,7 +1324,7 @@ class TCPControlUI:
                 if joint_angles is None:
                     from action_libraries import compute_ik_quaternion_robust
                     joint_angles = compute_ik_quaternion_robust(
-                        position,
+                        tcp_position,
                         target_quat,
                         max_tries=5,
                         dx=0.001,
@@ -1145,63 +1353,73 @@ class TCPControlUI:
             self.status_label.config(text="Status: Invalid RPY values")
     
     def move_to_home(self):
-        """Move robot to home position and set it as fixed position"""
+        """Move robot to home position and set offset point as fixed position"""
         self.status_label.config(text="Status: Moving to home...")
         self.node.move_to_home()
-        # Update the position fields to show home values
+        # Update the position fields to show home offset point values
         from action_libraries import HOME_POSE_QUATERNION
-        self.x_var.set(str(HOME_POSE_QUATERNION[0]))
-        self.y_var.set(str(HOME_POSE_QUATERNION[1]))
-        self.z_var.set(str(HOME_POSE_QUATERNION[2]))
+        home_tcp_position = HOME_POSE_QUATERNION[0:3]
+        home_quaternion = HOME_POSE_QUATERNION[3:7]
+        offset_point = self.node.compute_offset_point(home_tcp_position, home_quaternion)
+        self.x_var.set(str(offset_point[0]))
+        self.y_var.set(str(offset_point[1]))
+        self.z_var.set(str(offset_point[2]))
         # Update fixed position label
-        self.fixed_position_label.config(text=f"Fixed Position: [{HOME_POSE_QUATERNION[0]:.3f}, {HOME_POSE_QUATERNION[1]:.3f}, {HOME_POSE_QUATERNION[2]:.3f}] m (Rotation Point)")
+        self.fixed_position_label.config(text=f"Fixed Position (Offset Point): [{offset_point[0]:.3f}, {offset_point[1]:.3f}, {offset_point[2]:.3f}] m (Rotation Point)")
         self.status_label.config(text="Status: Home command sent")
     
     def set_fixed_to_current(self):
-        """Set fixed position to current position"""
-        if self.node.current_position is not None:
+        """Set fixed position (offset point) to current offset point"""
+        if self.node.current_position is not None and self.node.current_quaternion is not None:
             self.node.set_fixed_position()
-            # Update input fields
-            pos = self.node.current_position
-            self.x_var.set(str(pos[0]))
-            self.y_var.set(str(pos[1]))
-            self.z_var.set(str(pos[2]))
+            # Update input fields with offset point (not TCP position)
+            offset_point = self.node.fixed_position
+            self.x_var.set(str(offset_point[0]))
+            self.y_var.set(str(offset_point[1]))
+            self.z_var.set(str(offset_point[2]))
             # Update fixed position label
-            self.fixed_position_label.config(text=f"Fixed Position: [{pos[0]:.3f}, {pos[1]:.3f}, {pos[2]:.3f}] m (Rotation Point)")
-            self.status_label.config(text="Status: Fixed position set to current position")
+            self.fixed_position_label.config(text=f"Fixed Position (Offset Point): [{offset_point[0]:.3f}, {offset_point[1]:.3f}, {offset_point[2]:.3f}] m (Rotation Point)")
+            self.status_label.config(text="Status: Fixed position (offset point) set to current")
         else:
             self.status_label.config(text="Status: No current position available")
     
     def set_fixed_to_home(self):
-        """Set fixed position to home position and move robot there"""
+        """Set fixed position (offset point) to home offset point and move robot there"""
         from action_libraries import HOME_POSE_QUATERNION
-        # Update input fields
-        self.x_var.set(str(HOME_POSE_QUATERNION[0]))
-        self.y_var.set(str(HOME_POSE_QUATERNION[1]))
-        self.z_var.set(str(HOME_POSE_QUATERNION[2]))
+        home_tcp_position = HOME_POSE_QUATERNION[0:3]
+        home_quaternion = HOME_POSE_QUATERNION[3:7]
+        # Compute offset point from home TCP position
+        offset_point = self.node.compute_offset_point(home_tcp_position, home_quaternion)
+        # Update input fields with offset point
+        self.x_var.set(str(offset_point[0]))
+        self.y_var.set(str(offset_point[1]))
+        self.z_var.set(str(offset_point[2]))
         # Update fixed position label
-        self.fixed_position_label.config(text=f"Fixed Position: [{HOME_POSE_QUATERNION[0]:.3f}, {HOME_POSE_QUATERNION[1]:.3f}, {HOME_POSE_QUATERNION[2]:.3f}] m (Rotation Point)")
+        self.fixed_position_label.config(text=f"Fixed Position (Offset Point): [{offset_point[0]:.3f}, {offset_point[1]:.3f}, {offset_point[2]:.3f}] m (Rotation Point)")
         # Move robot to home
         self.move_to_home()
     
     def move_to_entered_position(self):
-        """Move robot to the entered position and set it as fixed position"""
+        """Move robot to the entered position (offset point) and set it as fixed position"""
         try:
             x = float(self.x_var.get())
             y = float(self.y_var.get())
             z = float(self.z_var.get())
-            position = [x, y, z]
+            offset_point = [x, y, z]
             
-            # Set as fixed position
-            self.node.set_fixed_position(position)
+            # Set as fixed position (offset point)
+            self.node.set_fixed_position(offset_point)
             
-            # Move robot to this position (with current orientation)
+            # Move robot to this offset point (with current orientation)
             self.status_label.config(text="Status: Moving to position...")
             if self.node.current_quaternion is not None:
+                # Compute TCP position from offset point
+                tcp_position = self.node.compute_tcp_from_offset_point(offset_point, self.node.current_quaternion)
+                
                 # Use current quaternion
                 from action_libraries import compute_ik_quaternion_robust
                 joint_angles = compute_ik_quaternion_robust(
-                    position,
+                    tcp_position,
                     self.node.current_quaternion,
                     max_tries=5,
                     dx=0.001,
@@ -1210,9 +1428,9 @@ class TCPControlUI:
                 
                 if joint_angles is not None:
                     if self.node.send_trajectory([joint_angles], 5.0):
-                        self.status_label.config(text=f"Status: Moving to [{x:.3f}, {y:.3f}, {z:.3f}]")
+                        self.status_label.config(text=f"Status: Moving to offset point [{x:.3f}, {y:.3f}, {z:.3f}]")
                         # Update fixed position label
-                        self.fixed_position_label.config(text=f"Fixed Position: [{x:.3f}, {y:.3f}, {z:.3f}] m (Rotation Point)")
+                        self.fixed_position_label.config(text=f"Fixed Position (Offset Point): [{x:.3f}, {y:.3f}, {z:.3f}] m (Rotation Point)")
                     else:
                         self.status_label.config(text="Status: Failed to send trajectory")
                 else:
@@ -1237,10 +1455,16 @@ class TCPControlUI:
             # Don't auto-update RPY input fields - let user control them
             # They can use "Set to Current RPY" button to update them
         
-        # Update fixed position display
+        # Update fixed position display (offset point)
         if self.node.fixed_position:
             fixed_pos = self.node.fixed_position
-            self.fixed_position_label.config(text=f"Fixed Position: [{fixed_pos[0]:.3f}, {fixed_pos[1]:.3f}, {fixed_pos[2]:.3f}] m (Rotation Point)")
+            self.fixed_position_label.config(text=f"Fixed Position (Offset Point): [{fixed_pos[0]:.3f}, {fixed_pos[1]:.3f}, {fixed_pos[2]:.3f}] m (Rotation Point)")
+        
+        # Update TCP offset display (sync with node value in case it changed)
+        current_offset = self.node.tcp_offset
+        if abs(self.tcp_offset_var.get() - current_offset) > 0.001:  # Only update if significantly different
+            self.tcp_offset_var.set(current_offset)
+        self.tcp_offset_label.config(text=f"Current: {current_offset:.3f} m")
         
         # Update rotation rate
         self.node.rotation_rate = self.rate_var.get() * 0.01
