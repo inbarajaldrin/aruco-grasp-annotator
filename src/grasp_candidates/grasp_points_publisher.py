@@ -327,10 +327,11 @@ class GraspPointsPublisher(Node):
     def transform_grasp_candidate(self, candidate, grasp_point_local, object_pose):
         """
         Transform grasp candidate from CAD center frame to base frame using object pose.
-        Uses the candidate's approach vector to calculate the correct orientation.
+        Uses the candidate's approach quaternion (new format) or approach vector (old format) to calculate the correct orientation.
         
         Args:
-            candidate: Dict with grasp_point_id, direction_id, grasp_candidate_position, approach_vector
+            candidate: Dict with grasp_point_id, direction_id, grasp_candidate_position, 
+                       and either approach_quaternion (new format) or approach_vector (old format)
             grasp_point_local: Dict with position (x, y, z) relative to CAD center (for position)
             object_pose: Dict with translation and quaternion of object in base frame
         
@@ -355,41 +356,74 @@ class GraspPointsPublisher(Node):
         # Transform: base_position = object_position + rotation * local_position
         pos_base = obj_translation + rotation_matrix @ pos_local
         
-        # Get approach vector from candidate
-        approach = candidate.get('approach_vector', {'x': 0.0, 'y': 0.0, 'z': 1.0})
-        approach_vec = np.array([approach['x'], approach['y'], approach['z']])
-        approach_vec = approach_vec / np.linalg.norm(approach_vec)  # Normalize
-        
-        # Calculate orientation quaternion from approach vector
-        # The approach vector is in CAD center frame (local frame)
-        # When approach_vector = [0, 0, 1], orientation = object orientation (same as grasp points)
-        # For other approach vectors, construct rotation in local frame that maps [0, 0, 1] to approach_vec
-        # Then combine with object orientation: R_base = R_object * R_local_approach
-        
-        z_axis = np.array([0.0, 0.0, 1.0])
-        
-        # If approach vector is [0, 0, 1], use object orientation directly
-        if np.allclose(approach_vec, z_axis):
-            quat_base = obj_quaternion
+        # Check if candidate has approach_quaternion (new format) or approach_vector (old format)
+        if 'approach_quaternion' in candidate:
+            # New format: use quaternion directly
+            approach_quat = candidate['approach_quaternion']
+            quat_local = np.array([
+                approach_quat['x'],
+                approach_quat['y'],
+                approach_quat['z'],
+                approach_quat['w']
+            ])
+            
+            # Use approach quaternion directly - only transform to base frame using object orientation
+            # Don't apply any gripper-specific transformations here
+            r_local = R.from_quat(quat_local)
+            r_obj = R.from_quat(obj_quaternion)
+            r_combined = r_obj * r_local
+            quat_base = r_combined.as_quat()
         else:
-            # Construct rotation matrix in local frame where Z-axis aligns with approach_vec
+            # Old format: use approach_vector (backward compatibility)
+            approach = candidate.get('approach_vector', {'x': 0.0, 'y': 0.0, 'z': 1.0})
+            approach_vec = np.array([approach['x'], approach['y'], approach['z']])
+            approach_vec = approach_vec / np.linalg.norm(approach_vec)  # Normalize
+            
+            # The approach vector represents the direction FROM which we approach the grasp point
+            # The gripper should point TOWARDS the grasp point (opposite to approach direction)
+            # So we negate the approach vector to get the gripper pointing direction
+            gripper_pointing_dir = -approach_vec  # Gripper points towards grasp point
+            
+            # Account for coordinate frame difference:
+            # - Object coordinate frame: Z points UP
+            # - Gripper coordinate frame: Z points DOWN (from TCP to fingertips)
+            # So we need to flip the Z component: [x, y, z] -> [x, y, -z]
+            # This accounts for the gripper Z-axis pointing down vs object Z pointing up
+            gripper_z_dir = np.array([gripper_pointing_dir[0], gripper_pointing_dir[1], -gripper_pointing_dir[2]])
+            gripper_z_dir = gripper_z_dir / np.linalg.norm(gripper_z_dir)  # Normalize
+            
+            # Calculate orientation quaternion from gripper Z direction
+            # The gripper Z-axis should point in the gripper_z_dir direction
+            # We construct a rotation where the gripper Z-axis (in gripper frame [0, 0, 1]) 
+            # aligns with gripper_z_dir in the object frame
+            
+            z_axis_gripper = np.array([0.0, 0.0, 1.0])  # Gripper Z-axis in gripper frame (points from TCP to fingertips)
+            
+            # Construct rotation matrix in local frame where Z-axis aligns with gripper_z_dir
             # We need to find two perpendicular vectors to complete the frame
-            if abs(approach_vec[2]) < 0.9:
+            if abs(gripper_z_dir[2]) < 0.9:
                 # Not too close to Z-axis, use cross product with Z-axis
-                x_axis_local = np.cross(z_axis, approach_vec)
-                x_axis_local = x_axis_local / np.linalg.norm(x_axis_local)
-                y_axis_local = np.cross(approach_vec, x_axis_local)
+                x_axis_local = np.cross(z_axis_gripper, gripper_z_dir)
+                if np.linalg.norm(x_axis_local) < 1e-6:
+                    # Vectors are parallel, use X-axis as reference
+                    x_axis_local = np.array([1.0, 0.0, 0.0])
+                else:
+                    x_axis_local = x_axis_local / np.linalg.norm(x_axis_local)
+                y_axis_local = np.cross(gripper_z_dir, x_axis_local)
                 y_axis_local = y_axis_local / np.linalg.norm(y_axis_local)
+                x_axis_local = np.cross(y_axis_local, gripper_z_dir)
+                x_axis_local = x_axis_local / np.linalg.norm(x_axis_local)
             else:
                 # Close to Z-axis, use X-axis as reference
                 x_axis_local = np.array([1.0, 0.0, 0.0])
-                y_axis_local = np.cross(approach_vec, x_axis_local)
+                y_axis_local = np.cross(gripper_z_dir, x_axis_local)
                 y_axis_local = y_axis_local / np.linalg.norm(y_axis_local)
-                x_axis_local = np.cross(y_axis_local, approach_vec)
+                x_axis_local = np.cross(y_axis_local, gripper_z_dir)
                 x_axis_local = x_axis_local / np.linalg.norm(x_axis_local)
             
             # Construct rotation matrix in local frame: columns are x, y, z axes
-            R_local_approach = np.column_stack([x_axis_local, y_axis_local, approach_vec])
+            # The Z-axis column is gripper_z_dir (direction gripper should point)
+            R_local_approach = np.column_stack([x_axis_local, y_axis_local, gripper_z_dir])
             
             # Convert to quaternion
             r_local_approach = R.from_matrix(R_local_approach)
