@@ -41,6 +41,25 @@ The publisher will:
 - Publish grasp points to `/grasp_points` topic
 - Publish grasp candidates to `/grasp_candidates` topic
 
+### Generating Grasp Candidates
+
+**Note**: Before generating grasp candidates, ensure you have already generated grasp points files (see `src/grasp_points/README.md` for details).
+
+To generate grasp candidates (18 approach directions per grasp point):
+
+```bash
+cd src/grasp_candidates
+python generate_grasp_candidates.py
+```
+
+This script will:
+- Read all `*_grasp_points_all_markers.json` files from `data/grasp/`
+- Generate 18 approach directions for each grasp point
+- Save output to `data/grasp_candidates/{object_name}_grasp_candidates.json`
+
+**Input**: `data/grasp/*_grasp_points_all_markers.json`  
+**Output**: `data/grasp_candidates/*_grasp_candidates.json`
+
 ### Running the Application
 
 ```bash
