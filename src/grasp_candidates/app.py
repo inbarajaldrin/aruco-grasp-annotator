@@ -289,6 +289,13 @@ async def read_root():
                             <button id="closeGripperButton" class="btn-gripper btn-gripper-close">Close Gripper</button>
                         </div>
                     </div>
+                    <div class="form-group">
+                        <h3>🏠 Robot Control</h3>
+                        <div class="gripper-buttons">
+                            <button id="moveToSafeHeightButton" class="btn-gripper btn-gripper-open">Move to Safe Height</button>
+                            <button id="moveHomeButton" class="btn-gripper btn-gripper-close">Move Home</button>
+                        </div>
+                    </div>
                 </div>
                 
                 <div class="info-panel">
@@ -388,6 +395,8 @@ async def read_root():
                 document.getElementById('executeButton').addEventListener('click', onExecuteButtonClick);
                 document.getElementById('openGripperButton').addEventListener('click', onOpenGripperClick);
                 document.getElementById('closeGripperButton').addEventListener('click', onCloseGripperClick);
+                document.getElementById('moveToSafeHeightButton').addEventListener('click', onMoveToSafeHeightClick);
+                document.getElementById('moveHomeButton').addEventListener('click', onMoveHomeClick);
                 
                 // Mouse click handler for grasp point selection
                 renderer.domElement.addEventListener('click', onGraspPointClick);
@@ -1225,6 +1234,62 @@ async def read_root():
                 }
             }
             
+            function onMoveToSafeHeightClick() {
+                moveToSafeHeight();
+            }
+            
+            function onMoveHomeClick() {
+                moveHome();
+            }
+            
+            async function moveToSafeHeight() {
+                try {
+                    updateStatus('Moving to safe height...');
+                    const response = await fetch('/api/move-to-safe-height', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        }
+                    });
+                    
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
+                    }
+                    
+                    const result = await response.json();
+                    updateStatus(`✅ ${result.message}`);
+                    console.log('Move to safe height command sent:', result);
+                } catch (error) {
+                    console.error('Error moving to safe height:', error);
+                    updateStatus(`❌ Error: ${error.message}`);
+                }
+            }
+            
+            async function moveHome() {
+                try {
+                    updateStatus('Moving to home position...');
+                    const response = await fetch('/api/move-home', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        }
+                    });
+                    
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
+                    }
+                    
+                    const result = await response.json();
+                    updateStatus(`✅ ${result.message}`);
+                    console.log('Move home command sent:', result);
+                } catch (error) {
+                    console.error('Error moving home:', error);
+                    updateStatus(`❌ Error: ${error.message}`);
+                }
+            }
+            
             function updateGraspInfo(candidateData) {
                 const infoDiv = document.getElementById('graspInfo');
                 
@@ -1607,6 +1672,180 @@ async def gripper_command(request: GripperCommandRequest):
         error_msg = f"Error sending gripper command: {str(e)}"
         print(f"❌ {error_msg}")
         raise HTTPException(status_code=500, detail=error_msg)
+
+
+@app.post("/api/move-to-safe-height")
+async def move_to_safe_height():
+    """Execute move_to_safe_height.py script."""
+    try:
+        # Get the script path
+        script_dir = Path(__file__).parent
+        script_path = script_dir / "move_to_safe_height.py"
+        
+        if not script_path.exists():
+            raise HTTPException(status_code=404, detail=f"Script not found: {script_path}")
+        
+        # Build command with bash to source ROS2 and use python3.10
+        cmd_str = (
+            f"source /opt/ros/humble/setup.bash && "
+            f"python3.10 {script_path}"
+        )
+        
+        # Execute in background (non-blocking) using bash
+        print(f"🔧 Executing command: {cmd_str}")
+        process = subprocess.Popen(
+            cmd_str,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            cwd=str(script_dir.parent.parent),
+            shell=True,
+            executable='/bin/bash',
+            text=True,
+            bufsize=1
+        )
+        
+        # Start a thread to read and log output
+        import threading
+        
+        def log_output(pipe, process_pid):
+            """Read output from process and log it."""
+            try:
+                for line in iter(pipe.readline, ''):
+                    if line:
+                        line = line.strip()
+                        if line:
+                            print(f"[PID {process_pid}] {line}")
+                pipe.close()
+            except Exception as e:
+                print(f"Error reading process output: {e}")
+        
+        # Start thread to log output
+        output_thread = threading.Thread(
+            target=log_output,
+            args=(process.stdout, process.pid),
+            daemon=True
+        )
+        output_thread.start()
+        
+        # Wait a moment to check if process started successfully
+        import time
+        time.sleep(0.5)
+        
+        # Check if process is still running or if it exited with error
+        return_code = process.poll()
+        if return_code is not None:
+            error_output = ""
+            try:
+                if process.stdout:
+                    remaining = process.stdout.read()
+                    if remaining:
+                        error_output = remaining.strip()
+            except:
+                pass
+            
+            error_msg = f"Process exited immediately with code {return_code}"
+            if error_output:
+                error_msg += f". Output: {error_output[:500]}"
+            print(f"❌ {error_msg}")
+            raise HTTPException(status_code=500, detail=error_msg)
+        
+        print(f"✅ Process started successfully with PID: {process.pid}")
+        
+        return JSONResponse(content={
+            "status": "started",
+            "message": "Moving to safe height",
+            "pid": process.pid
+        })
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error executing move to safe height: {str(e)}")
+
+
+@app.post("/api/move-home")
+async def move_home():
+    """Execute move_home.py script."""
+    try:
+        # Get the script path
+        script_dir = Path(__file__).parent
+        script_path = script_dir / "move_home.py"
+        
+        if not script_path.exists():
+            raise HTTPException(status_code=404, detail=f"Script not found: {script_path}")
+        
+        # Build command with bash to source ROS2 and use python3.10
+        cmd_str = (
+            f"source /opt/ros/humble/setup.bash && "
+            f"python3.10 {script_path}"
+        )
+        
+        # Execute in background (non-blocking) using bash
+        print(f"🔧 Executing command: {cmd_str}")
+        process = subprocess.Popen(
+            cmd_str,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            cwd=str(script_dir.parent.parent),
+            shell=True,
+            executable='/bin/bash',
+            text=True,
+            bufsize=1
+        )
+        
+        # Start a thread to read and log output
+        import threading
+        
+        def log_output(pipe, process_pid):
+            """Read output from process and log it."""
+            try:
+                for line in iter(pipe.readline, ''):
+                    if line:
+                        line = line.strip()
+                        if line:
+                            print(f"[PID {process_pid}] {line}")
+                pipe.close()
+            except Exception as e:
+                print(f"Error reading process output: {e}")
+        
+        # Start thread to log output
+        output_thread = threading.Thread(
+            target=log_output,
+            args=(process.stdout, process.pid),
+            daemon=True
+        )
+        output_thread.start()
+        
+        # Wait a moment to check if process started successfully
+        import time
+        time.sleep(0.5)
+        
+        # Check if process is still running or if it exited with error
+        return_code = process.poll()
+        if return_code is not None:
+            error_output = ""
+            try:
+                if process.stdout:
+                    remaining = process.stdout.read()
+                    if remaining:
+                        error_output = remaining.strip()
+            except:
+                pass
+            
+            error_msg = f"Process exited immediately with code {return_code}"
+            if error_output:
+                error_msg += f". Output: {error_output[:500]}"
+            print(f"❌ {error_msg}")
+            raise HTTPException(status_code=500, detail=error_msg)
+        
+        print(f"✅ Process started successfully with PID: {process.pid}")
+        
+        return JSONResponse(content={
+            "status": "started",
+            "message": "Moving to home position",
+            "pid": process.pid
+        })
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error executing move home: {str(e)}")
 
 
 def main():
