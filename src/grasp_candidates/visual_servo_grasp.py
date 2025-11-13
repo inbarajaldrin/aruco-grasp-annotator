@@ -156,13 +156,18 @@ class DirectObjectMove(Node):
         # Calibration offset to correct systematic detection bias
         self.calibration_offset_x = -0.0  # -0mm correction (move left)
         self.calibration_offset_y = -0.0  # +0mm correction (move forward)
-        # TCP offset distance (from TCP to fingertips along gripper Z-axis)
+        # TCP to gripper center offset distance (from TCP to gripper center along gripper Z-axis)
         # This implements a spherical flexure joint concept (same as URSim TCP control):
-        # - The offset point (fingertips) acts as a fixed point in space
+        # - The offset point (gripper center) acts as a fixed point in space
         # - When rotating the gripper, TCP moves to keep the offset point fixed
-        # - offset_point = tcp_position + tcp_offset * z_axis_gripper
-        # - tcp_position = offset_point - tcp_offset * z_axis_gripper
-        self.tcp_offset = 0.115  # 0.115m = 11.5cm (distance from TCP to fingertips)
+        # - offset_point = tcp_position + tcp_to_gripper_center_offset * z_axis_gripper
+        # - tcp_position = offset_point - tcp_to_gripper_center_offset * z_axis_gripper
+        self.tcp_to_gripper_center_offset = 0.24  # 0.24m = 24cm (distance from TCP to gripper center)
+        
+        # Offset from target object to gripper center (grasp candidate position to gripper center)
+        # This offset is subtracted directly from the Z coordinate of the grasp candidate position
+        # to get the actual gripper center position (offset point)
+        self.object_to_gripper_center_offset = 0.123  # 0.123m = 12.3cm (distance from object to gripper center in Z)
         
         # Initialize Kalman filter
         self.kalman_filter = PoseKalmanFilter(process_noise=0.005, measurement_noise=0.05)
@@ -263,7 +268,7 @@ class DirectObjectMove(Node):
         if height is not None:
             self.get_logger().info(f"📏 Target height: {height}m (offset will be ignored)")
         else:
-            self.get_logger().info(f"📏 Using {self.tcp_offset*100:.1f}cm TCP offset (from TCP to fingertips along gripper Z-axis)")
+            self.get_logger().info(f"📏 Using {self.tcp_to_gripper_center_offset*100:.1f}cm TCP to gripper center offset (along gripper Z-axis)")
         self.get_logger().info(f"⏱️ Movement duration: {movement_duration}s")
         if self.grasp_point_id is not None and self.direction_id is not None:
             self.get_logger().info(f"🎯 Grasp candidate mode: Using grasp_point_id {grasp_point_id}, direction_id {direction_id} from topic {grasp_candidates_topic}")
@@ -288,7 +293,7 @@ class DirectObjectMove(Node):
         """
         # Offset vector in tool frame (gripper frame): [0, 0, offset_distance]
         # In tool frame, Z-axis points from TCP to fingertips (downward)
-        offset_vector_tool_frame = np.array([0.0, 0.0, self.tcp_offset])
+        offset_vector_tool_frame = np.array([0.0, 0.0, self.tcp_to_gripper_center_offset])
         
         # Transform offset vector from tool frame to world frame using quaternion
         # The quaternion represents the rotation from tool frame to world frame
@@ -302,33 +307,31 @@ class DirectObjectMove(Node):
         return offset_point.tolist()
     
     def compute_tcp_from_offset_point(self, offset_point, quaternion):
-        """Compute TCP position from offset point using spherical flexure joint concept
-        (Same as URSim TCP control)
+        """Compute TCP position from offset point using the gripper orientation
         
-        The offset vector is defined in the tool frame (gripper frame) and then
-        transformed to world frame using the tool orientation quaternion.
-        This implements the spherical flexure joint: the offset point (fingertips) 
-        remains fixed while the TCP moves as the tool rotates.
+        The offset is computed along the gripper Z-axis in world frame.
+        The gripper Z-axis is obtained from the quaternion orientation.
         
         Args:
-            offset_point: Position of the offset point (fingertips) in world frame [x, y, z]
-            quaternion: TCP/tool orientation quaternion [x, y, z, w] (tool frame to world frame)
+            offset_point: Position of the gripper center (offset point) in world frame [x, y, z]
+            quaternion: Gripper orientation quaternion [x, y, z, w] (gripper frame to world frame)
+                       The quaternion's Z-axis points from TCP to gripper center.
         
         Returns:
             tcp_position: TCP position in world frame [x, y, z]
         """
-        # Offset vector in tool frame (gripper frame): [0, 0, offset_distance]
-        # In tool frame, Z-axis points from TCP to fingertips (downward)
-        offset_vector_tool_frame = np.array([0.0, 0.0, self.tcp_offset])
-        
-        # Transform offset vector from tool frame to world frame using quaternion
-        # The quaternion represents the rotation from tool frame to world frame
+        # Get gripper Z-axis direction in world frame
         r = R.from_quat(quaternion)
-        offset_vector_world = r.apply(offset_vector_tool_frame)
+        gripper_z_axis = r.apply(np.array([0.0, 0.0, 1.0]))  # Gripper Z-axis in world frame
+        gripper_z_axis = gripper_z_axis / np.linalg.norm(gripper_z_axis)  # Normalize
         
-        # Compute TCP position: offset_point - offset_vector_world
-        # (going backwards from fingertips to TCP along the tool Z-axis)
-        tcp_position = np.array(offset_point) - offset_vector_world
+        # Compute offset vector in world frame
+        # The offset goes from gripper center to TCP, opposite to gripper Z-axis
+        offset_vector_world = -self.tcp_to_gripper_center_offset * gripper_z_axis
+        
+        # Compute TCP position: offset_point + offset_vector_world
+        # (going from gripper center towards TCP, opposite to gripper Z-axis)
+        tcp_position = np.array(offset_point) + offset_vector_world
         
         return tcp_position.tolist()
         
@@ -544,16 +547,18 @@ class DirectObjectMove(Node):
             self.get_logger().info(f"🎯 Using provided target position: {object_position} (with calibration offset applied) and orientation: {rpy}")
         elif self.selected_grasp_candidate is not None:
             # Use grasp candidate position and orientation directly from the message
-            # The grasp candidate position is where the fingertips should be (offset point)
-            offset_point = np.array([
+            # The grasp candidate position is the target object position
+            # We need to subtract the object-to-gripper-center offset from the Z coordinate
+            # to get where the gripper center should be (offset point)
+            grasp_candidate_position = np.array([
                 self.selected_grasp_candidate.pose.position.x,
                 self.selected_grasp_candidate.pose.position.y,
                 self.selected_grasp_candidate.pose.position.z
             ])
             
             # Apply calibration offset to correct systematic detection bias
-            offset_point[0] += self.calibration_offset_x  # Correct X offset
-            offset_point[1] += self.calibration_offset_y  # Correct Y offset
+            grasp_candidate_position[0] += self.calibration_offset_x  # Correct X offset
+            grasp_candidate_position[1] += self.calibration_offset_y  # Correct Y offset
             
             # Get the gripper orientation from the grasp candidate
             target_quaternion = np.array([
@@ -563,6 +568,18 @@ class DirectObjectMove(Node):
                 self.selected_grasp_candidate.pose.orientation.w
             ])
             
+            # Calculate approach direction (Z-axis of grasp candidate frame)
+            # The approach direction points from fingertips towards the object
+            r = R.from_quat(target_quaternion)
+            approach_direction = r.apply(np.array([0.0, 0.0, 1.0]))  # Z-axis in world frame
+            approach_direction = approach_direction / np.linalg.norm(approach_direction)  # Normalize
+            
+            # Subtract the object-to-gripper-center offset directly from the Z coordinate
+            # This gives us the gripper center position (offset point)
+            # The offset is always subtracted from Z, regardless of approach direction
+            offset_point = grasp_candidate_position.copy()
+            offset_point[2] -= self.object_to_gripper_center_offset
+            
             # Use the provided RPY values directly from the grasp candidate message
             roll = self.selected_grasp_candidate.roll
             pitch = self.selected_grasp_candidate.pitch
@@ -571,7 +588,10 @@ class DirectObjectMove(Node):
             rpy = [roll, pitch, yaw]
             
             self.get_logger().info(f"🎯 Using grasp candidate: grasp_point_id {self.grasp_point_id}, direction_id {self.direction_id}")
-            self.get_logger().info(f"🎯 Offset point (fingertips) position: {offset_point} (with calibration offset applied)")
+            self.get_logger().info(f"🎯 Grasp candidate position (object): {grasp_candidate_position}")
+            self.get_logger().info(f"🎯 Approach direction: ({approach_direction[0]:.3f}, {approach_direction[1]:.3f}, {approach_direction[2]:.3f})")
+            self.get_logger().info(f"🎯 Subtracting object-to-gripper-center offset: {self.object_to_gripper_center_offset*100:.1f}cm from Z coordinate (Z: {grasp_candidate_position[2]:.3f} -> {offset_point[2]:.3f})")
+            self.get_logger().info(f"🎯 Offset point (gripper center) position: {offset_point} (with calibration and object-to-gripper-center offset applied)")
             self.get_logger().info(f"🎯 Grasp candidate orientation (RPY): [{roll:.1f}, {pitch:.1f}, {yaw:.1f}] degrees")
         elif self.selected_grasp_point is not None:
             # Use grasp point position and orientation directly from the message (legacy mode)
@@ -681,13 +701,13 @@ class DirectObjectMove(Node):
             z_axis_gripper_world = z_axis_gripper_world / np.linalg.norm(z_axis_gripper_world)  # Normalize
             
             # Calculate the offset vector in world frame (shows how quaternion affects TCP position)
-            offset_vector_world = self.tcp_offset * z_axis_gripper_world
+            offset_vector_world = self.tcp_to_gripper_center_offset * z_axis_gripper_world
             
             self.get_logger().info(f"📏 Offset point (fingertips) position: ({offset_point[0]:.3f}, {offset_point[1]:.3f}, {offset_point[2]:.3f})")
             self.get_logger().info(f"📏 Target gripper orientation (quaternion): [{target_quaternion[0]:.4f}, {target_quaternion[1]:.4f}, {target_quaternion[2]:.4f}, {target_quaternion[3]:.4f}]")
-            self.get_logger().info(f"📏 Gripper Z-axis direction (TCP to fingertips): ({z_axis_gripper_world[0]:.3f}, {z_axis_gripper_world[1]:.3f}, {z_axis_gripper_world[2]:.3f})")
+            self.get_logger().info(f"📏 Gripper Z-axis direction (TCP to gripper center): ({z_axis_gripper_world[0]:.3f}, {z_axis_gripper_world[1]:.3f}, {z_axis_gripper_world[2]:.3f})")
             self.get_logger().info(f"📏 Offset vector in world frame (from quaternion): ({offset_vector_world[0]:.3f}, {offset_vector_world[1]:.3f}, {offset_vector_world[2]:.3f})")
-            self.get_logger().info(f"📏 TCP offset: {self.tcp_offset*100:.1f}cm along gripper Z-axis")
+            self.get_logger().info(f"📏 TCP to gripper center offset: {self.tcp_to_gripper_center_offset*100:.1f}cm along gripper Z-axis")
             self.get_logger().info(f"🎯 Target TCP position: ({target_ee_position[0]:.3f}, {target_ee_position[1]:.3f}, {target_ee_position[2]:.3f})")
             self.get_logger().info(f"💡 Note: TCP position = offset_point - offset_vector, where offset_vector depends on quaternion orientation")
             
