@@ -25,6 +25,22 @@ Required packages:
 
 ## Usage
 
+### Prerequisites
+
+**Important**: Start the grasp points publisher before running the application:
+
+```bash
+# Start the grasp points publisher (in a separate terminal)
+# Make sure ROS2 is sourced first
+source /opt/ros/humble/setup.bash
+python3.10 src/grasp_candidates/grasp_points_publisher.py
+```
+
+The publisher will:
+- Subscribe to `/objects_poses_sim` topic for object poses
+- Publish grasp points to `/grasp_points` topic
+- Publish grasp candidates to `/grasp_candidates` topic
+
 ### Running the Application
 
 ```bash
