@@ -812,31 +812,95 @@ async def read_root():
                         // Traverse up to find the sphere
                         while (obj && obj.userData) {
                             if (obj.userData.type === 'grasp_point' && obj.userData.isClickable) {
+                                const clickedCandidateId = obj.userData.id;  // Full candidate ID (e.g., "6_16")
                                 const clickedGraspPointId = obj.userData.graspPointId;
+                                const clickedDirectionId = obj.userData.directionId;
                                 
-                                // If clicking the same grasp point, deselect it
-                                if (selectedGraspPointId === clickedGraspPointId) {
-                                    selectedGraspPointId = null;
-                                    selectedGraspId = null;
-                                    updateGraspPointSelector();
+                                // If no grasp point is selected, select the grasp point
+                                if (selectedGraspPointId === null) {
+                                    // Select the clicked grasp point
+                                    selectedGraspPointId = clickedGraspPointId;
+                                    selectedGraspId = null;  // Clear candidate selection
+                                    
+                                    // Update dropdowns
+                                    document.getElementById('graspSelect').value = clickedGraspPointId.toString();
+                                    document.getElementById('directionSelect').value = '';
+                                    document.getElementById('directionSelect').disabled = false;
+                                    updateDirectionSelector(clickedGraspPointId.toString());
+                                    
+                                    // Update visualization
                                     updateVisualization();
+                                    
                                     return;
                                 }
                                 
-                                // Select the clicked grasp point
-                                selectedGraspPointId = clickedGraspPointId;
-                                selectedGraspId = null;  // Clear candidate selection
-                                
-                                // Update dropdowns
-                                document.getElementById('graspSelect').value = clickedGraspPointId.toString();
-                                document.getElementById('directionSelect').value = '';
-                                document.getElementById('directionSelect').disabled = false;
-                                updateDirectionSelector(clickedGraspPointId.toString());
-                                
-                                // Update visualization
-                                updateVisualization();
-                                
-                                return;
+                                // If a grasp point is already selected, check if clicking on a candidate from that grasp point
+                                if (selectedGraspPointId === clickedGraspPointId) {
+                                    // If clicking the same candidate, deselect it
+                                    if (selectedGraspId === clickedCandidateId) {
+                                        selectedGraspId = null;
+                                        document.getElementById('directionSelect').value = '';
+                                        updateVisualization();
+                                        updateGraspInfo(null);
+                                        // Hide execute button
+                                        const executeButtonGroup = document.getElementById('executeButtonGroup');
+                                        const executeButton = document.getElementById('executeButton');
+                                        if (executeButtonGroup) executeButtonGroup.style.display = 'none';
+                                        if (executeButton) executeButton.disabled = true;
+                                        return;
+                                    }
+                                    
+                                    // Select the clicked candidate from the selected grasp point
+                                    selectedGraspId = clickedCandidateId;
+                                    
+                                    // Update dropdowns to reflect the selected candidate
+                                    document.getElementById('directionSelect').value = clickedDirectionId.toString();
+                                    
+                                    // Update grasp info and execute button
+                                    const candidate = currentGraspCandidates.grasp_candidates.find(
+                                        c => c.grasp_point_id === clickedGraspPointId && c.direction_id === clickedDirectionId
+                                    );
+                                    const graspPoint = currentGraspData.grasp_points.find(gp => gp.id === clickedGraspPointId);
+                                    
+                                    if (candidate && graspPoint) {
+                                        const candidateData = {
+                                            id: clickedCandidateId,
+                                            grasp_point_id: clickedGraspPointId.toString(),
+                                            direction_id: clickedDirectionId.toString(),
+                                            position: graspPoint.position,
+                                            approach_quaternion: candidate.approach_quaternion,
+                                            approach_vector: candidate.approach_vector,
+                                            type: graspPoint.type || 'center_point'
+                                        };
+                                        updateGraspInfo(candidateData);
+                                        
+                                        // Show and enable execute button
+                                        const executeButtonGroup = document.getElementById('executeButtonGroup');
+                                        const executeButton = document.getElementById('executeButton');
+                                        if (executeButtonGroup) executeButtonGroup.style.display = 'block';
+                                        if (executeButton) executeButton.disabled = false;
+                                    }
+                                    
+                                    // Update visualization
+                                    updateVisualization();
+                                    
+                                    return;
+                                } else {
+                                    // Clicking on a different grasp point - select that grasp point instead
+                                    selectedGraspPointId = clickedGraspPointId;
+                                    selectedGraspId = null;  // Clear candidate selection
+                                    
+                                    // Update dropdowns
+                                    document.getElementById('graspSelect').value = clickedGraspPointId.toString();
+                                    document.getElementById('directionSelect').value = '';
+                                    document.getElementById('directionSelect').disabled = false;
+                                    updateDirectionSelector(clickedGraspPointId.toString());
+                                    
+                                    // Update visualization
+                                    updateVisualization();
+                                    
+                                    return;
+                                }
                             }
                             obj = obj.parent;
                         }
