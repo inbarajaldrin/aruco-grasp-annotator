@@ -643,6 +643,8 @@ async def read_root():
             let groundTruthWireframe = null;  // Reference to ground truth (faded) wireframe for comparison
             let objectFoldValues = {};  // Store fold values per object: {objectName: {x: 2, y: 4, z: 1}}
             const SYMMETRY_COLOR = 0x00ff00;  // Green color for symmetry match
+            // Anchor the last canonical pose (when any symmetry axis matches)
+            let canonicalAnchor = { active: false, axes: [], euler: { x: 0, y: 0, z: 0 } };
             
             // Grasp point colors (matching grasp_candidates visualization)
             const GRASP_COLOR_DEFAULT = 0x00ff00;  // Green
@@ -760,11 +762,21 @@ async def read_root():
                 switch(event.key) {
                     case 'q':
                     case 'Q':
-                        selectedObject.rotation.y -= rotStep;
+                        if (selectedObject.userData && selectedObject.userData.type === 'component') {
+                            selectedObject.rotateY(-rotStep);
+                            const ang = selectedObject.userData.sliderAngles || { x:0, y:0, z:0 };
+                            ang.y = (ang.y || 0) - rotStep;
+                            selectedObject.userData.sliderAngles = ang;
+                        }
                         break;
                     case 'e':
                     case 'E':
-                        selectedObject.rotation.y += rotStep;
+                        if (selectedObject.userData && selectedObject.userData.type === 'component') {
+                            selectedObject.rotateY(rotStep);
+                            const ang = selectedObject.userData.sliderAngles || { x:0, y:0, z:0 };
+                            ang.y = (ang.y || 0) + rotStep;
+                            selectedObject.userData.sliderAngles = ang;
+                        }
                         break;
                     case 'Delete':
                         deleteSelectedObject();
@@ -869,7 +881,8 @@ async def read_root():
                     type: 'component',
                     displayName: component.display_name,
                     originalColor: getComponentColor(componentName),
-                    id: generateId()
+                    id: generateId(),
+                    sliderAngles: { x: 0, y: 0, z: 0 }  // track absolute slider rotations in radians
                 };
                 
                 // Position at origin (scene is cleared before adding new object)
@@ -1021,12 +1034,17 @@ async def read_root():
             }
             
             function getQuaternionDisplay(rotation) {
-                // Convert Euler angles to quaternion
+                // Convert Euler angles to quaternion (legacy)
                 const euler = new THREE.Euler(rotation.x, rotation.y, rotation.z, 'XYZ');
                 const quaternion = new THREE.Quaternion();
                 quaternion.setFromEuler(euler);
                 
                 return `X: ${quaternion.x.toFixed(4)}, Y: ${quaternion.y.toFixed(4)}, Z: ${quaternion.z.toFixed(4)}, W: ${quaternion.w.toFixed(4)}`;
+            }
+            
+            function getQuaternionDisplayFromObject(obj) {
+                const q = obj.quaternion;
+                return `X: ${q.x.toFixed(4)}, Y: ${q.y.toFixed(4)}, Z: ${q.z.toFixed(4)}, W: ${q.w.toFixed(4)}`;
             }
             
             function updateSelectedObjectInfo() {
@@ -1040,7 +1058,7 @@ async def read_root():
                 }
                 
                 const obj = selectedObject;
-                const rot = obj.rotation;
+                const angles = obj.userData && obj.userData.sliderAngles ? obj.userData.sliderAngles : obj.rotation;
                 
                 // Show fold symmetry panel only for component objects
                 if (obj.userData.type === 'component' && foldPanel) {
@@ -1063,30 +1081,30 @@ async def read_root():
                             <div class="control-row">
                                 <span class="control-label">X:</span>
                                 <input type="range" class="control-input" min="0" max="360" step="1" 
-                                       value="${normalizeAngleForSlider(rot.x)}" 
+                                       value="${normalizeAngleForSlider(angles.x)}" 
                                        oninput="setObjectRotationFromSlider('x', this.value)"
                                        style="flex: 1; margin: 0 10px;">
-                                <input type="number" class="control-input" step="1" value="${(rot.x * 180 / Math.PI).toFixed(1)}" 
+                                <input type="number" class="control-input" step="1" value="${(angles.x * 180 / Math.PI).toFixed(1)}" 
                                        onchange="setObjectRotation('x', this.value * Math.PI / 180)"
                                        style="width: 80px;">
                             </div>
                             <div class="control-row">
                                 <span class="control-label">Y:</span>
                                 <input type="range" class="control-input" min="0" max="360" step="1" 
-                                       value="${normalizeAngleForSlider(rot.y)}" 
+                                       value="${normalizeAngleForSlider(angles.y)}" 
                                        oninput="setObjectRotationFromSlider('y', this.value)"
                                        style="flex: 1; margin: 0 10px;">
-                                <input type="number" class="control-input" step="1" value="${(rot.y * 180 / Math.PI).toFixed(1)}" 
+                                <input type="number" class="control-input" step="1" value="${(angles.y * 180 / Math.PI).toFixed(1)}" 
                                        onchange="setObjectRotation('y', this.value * Math.PI / 180)"
                                        style="width: 80px;">
                             </div>
                             <div class="control-row">
                                 <span class="control-label">Z:</span>
                                 <input type="range" class="control-input" min="0" max="360" step="1" 
-                                       value="${normalizeAngleForSlider(rot.z)}" 
+                                       value="${normalizeAngleForSlider(angles.z)}" 
                                        oninput="setObjectRotationFromSlider('z', this.value)"
                                        style="flex: 1; margin: 0 10px;">
-                                <input type="number" class="control-input" step="1" value="${(rot.z * 180 / Math.PI).toFixed(1)}" 
+                                <input type="number" class="control-input" step="1" value="${(angles.z * 180 / Math.PI).toFixed(1)}" 
                                        onchange="setObjectRotation('z', this.value * Math.PI / 180)"
                                        style="width: 80px;">
                             </div>
@@ -1095,7 +1113,7 @@ async def read_root():
                         <div class="control-group">
                             <h4>Quaternion</h4>
                             <div id="quaternionDisplay" style="padding: 10px; background: #f8f9fa; border-radius: 4px; font-family: 'Courier New', monospace; font-size: 13px;">
-                                ${getQuaternionDisplay(rot)}
+                                ${getQuaternionDisplayFromObject(obj)}
                             </div>
                         </div>
                         
@@ -1126,16 +1144,35 @@ async def read_root():
             // Precision control functions
             function setObjectRotation(axis, value) {
                 if (!selectedObject) return;
-                selectedObject.rotation[axis] = parseFloat(value);
+                if (selectedObject.userData.type !== 'component') return;
+                const obj = selectedObject;
+                const radians = parseFloat(value);
+                const angles = obj.userData.sliderAngles || { x: obj.rotation.x, y: obj.rotation.y, z: obj.rotation.z };
+                const prev = angles[axis] || 0;
+                const delta = radians - prev;
+                if (axis === 'x') obj.rotateX(delta);
+                if (axis === 'y') obj.rotateY(delta);
+                if (axis === 'z') obj.rotateZ(delta);
+                angles[axis] = radians;
+                obj.userData.sliderAngles = angles;
                 checkFoldSymmetry(axis);
                 updateSelectedObjectInfo();  // Update to refresh quaternion display
-                updateStatus(`Rotated ${selectedObject.userData.displayName} ${axis.toUpperCase()}: ${(value * 180 / Math.PI).toFixed(1)}°`);
+                updateStatus(`Rotated ${obj.userData.displayName} ${axis.toUpperCase()}: ${(radians * 180 / Math.PI).toFixed(1)}°`);
             }
             
             function setObjectRotationFromSlider(axis, value) {
                 if (!selectedObject) return;
+                if (selectedObject.userData.type !== 'component') return;
+                const obj = selectedObject;
                 const radians = parseFloat(value) * Math.PI / 180;
-                selectedObject.rotation[axis] = radians;
+                const angles = obj.userData.sliderAngles || { x: obj.rotation.x, y: obj.rotation.y, z: obj.rotation.z };
+                const prev = angles[axis] || 0;
+                const delta = radians - prev;
+                if (axis === 'x') obj.rotateX(delta);
+                if (axis === 'y') obj.rotateY(delta);
+                if (axis === 'z') obj.rotateZ(delta);
+                angles[axis] = radians;
+                obj.userData.sliderAngles = angles;
                 checkFoldSymmetry(axis);
                 
                 // Update the corresponding number input field
@@ -1150,16 +1187,24 @@ async def read_root():
                 // Update quaternion display without regenerating entire HTML
                 const quaternionDisplay = document.getElementById('quaternionDisplay');
                 if (quaternionDisplay) {
-                    quaternionDisplay.innerHTML = getQuaternionDisplay(selectedObject.rotation);
+                    quaternionDisplay.innerHTML = getQuaternionDisplayFromObject(obj);
                 }
             }
             
             function rotateObject(axis, delta) {
                 if (!selectedObject) return;
-                selectedObject.rotation[axis] += delta;
+                if (selectedObject.userData.type !== 'component') return;
+                const obj = selectedObject;
+                if (axis === 'x') obj.rotateX(delta);
+                if (axis === 'y') obj.rotateY(delta);
+                if (axis === 'z') obj.rotateZ(delta);
+                // Update sliderAngles store
+                const angles = obj.userData.sliderAngles || { x: 0, y: 0, z: 0 };
+                angles[axis] = (angles[axis] || 0) + delta;
+                obj.userData.sliderAngles = angles;
                 checkFoldSymmetry(axis);
                 updateSelectedObjectInfo();  // Update to refresh quaternion display
-                updateStatus(`Rotated ${selectedObject.userData.displayName} ${axis.toUpperCase()}: ${(selectedObject.rotation[axis] * 180 / Math.PI).toFixed(1)}°`);
+                updateStatus(`Rotated ${obj.userData.displayName} ${axis.toUpperCase()}: ${(angles[axis] * 180 / Math.PI).toFixed(1)}°`);
             }
             
             function checkFoldSymmetry(rotatedAxis = null) {
@@ -1167,42 +1212,62 @@ async def read_root():
                 if (!currentObjectName) return;
                 
                 const foldValues = objectFoldValues[currentObjectName] || {};
-                const rot = selectedObject.rotation;
+                const rot = selectedObject.userData && selectedObject.userData.sliderAngles ? selectedObject.userData.sliderAngles : selectedObject.rotation;
                 
-                // If a specific axis was rotated, only check that axis
-                // Otherwise, check all axes (for cases like reset or initial load)
-                const axesToCheck = rotatedAxis ? [rotatedAxis] : ['x', 'y', 'z'];
-                
-                let hasSymmetry = false;
-                
-                axesToCheck.forEach(axis => {
+                // Determine which axes are currently at a symmetry (canonical) angle
+                const canonicalAxes = [];
+                ['x', 'y', 'z'].forEach(axis => {
                     const fold = foldValues[axis];
-                    if (fold && fold > 0) {
-                        // Convert to degrees and normalize to 0-360 range
+                    // Treat fold=1 as no symmetry (i.e., not canonical)
+                    if (fold && fold >= 2) {
                         let angleDeg = (rot[axis] * 180 / Math.PI);
                         angleDeg = angleDeg % 360;
                         if (angleDeg < 0) angleDeg += 360;
-                        
                         const stepAngle = 360 / fold;
-                        
-                        // Check if current angle matches any fold symmetry angle
-                        const isSymmetryAngle = checkIfSymmetryAngle(angleDeg, fold, stepAngle);
-                        
-                        if (isSymmetryAngle) {
-                            hasSymmetry = true;
+                        if (checkIfSymmetryAngle(angleDeg, fold, stepAngle)) {
+                            canonicalAxes.push(axis);
                         }
+                    }
+                });
+                
+                // Color decision: respect rotatedAxis rule (only color green if the rotated axis matches)
+                const axesToCheck = rotatedAxis ? [rotatedAxis] : ['x', 'y', 'z'];
+                let hasSymmetryForColor = false;
+                axesToCheck.forEach(axis => {
+                    if (canonicalAxes.includes(axis)) {
+                        hasSymmetryForColor = true;
                     }
                 });
                 
                 // Change mesh color based on symmetry match
                 // Only turn green if the rotated axis has a fold value and matches symmetry
-                if (hasSymmetry && selectedObject.material) {
+                if (hasSymmetryForColor && selectedObject.material) {
                     selectedObject.material.color.setHex(SYMMETRY_COLOR);
-                    // Update grasp point orientations to canonical (base orientation)
-                    updateGraspPointOrientationsToCanonical();
                 } else if (selectedObject.material) {
                     selectedObject.material.color.setHex(selectedObject.userData.originalColor);
-                    // Restore grasp point orientations to original
+                }
+                
+                // Canonical anchor handling:
+                // TODO: Verify logic works correctly for assembly scenarios
+                // - Test with objects that have different fold symmetries
+                // - Verify grippers lock correctly at canonical poses and follow free axes properly
+                // - Ensure gripper orientations remain consistent when transitioning between canonical poses
+                if (canonicalAxes.length > 0) {
+                    // Currently AT a canonical pose - lock grippers to canonical orientation
+                    canonicalAnchor.active = true;
+                    canonicalAnchor.axes = canonicalAxes.slice();
+                    canonicalAnchor.euler = {
+                        x: rot.x,
+                        y: rot.y,
+                        z: rot.z
+                    };
+                    // Lock grippers to their original approach vectors (canonical orientation)
+                    restoreGraspPointOrientations();
+                } else if (canonicalAnchor.active && canonicalAnchor.axes.length > 0) {
+                    // NOT at canonical anymore - apply residual rotation from anchor
+                    updateGraspPointOrientationsFromAnchor(canonicalAnchor);
+                } else {
+                    // No canonical axes ever detected - restore normal orientation
                     restoreGraspPointOrientations();
                 }
             }
@@ -1261,23 +1326,81 @@ async def read_root():
             }
             
             function restoreGraspPointOrientations() {
-                // Restore grasp point orientations to their original approach vectors
                 if (!graspPointsList) return;
                 
                 graspPointsList.forEach(sphere => {
                     if (sphere.userData.gripperGroup && sphere.userData.originalApproachVector) {
-                        // Get the original approach vector
                         const originalApproach = sphere.userData.originalApproachVector.clone();
                         
-                        // Update gripper orientation to match original approach vector
+                        // Apply INVERSE of current object rotation to the approach vector
+                        const currentObjectQuat = currentWireframe && currentWireframe.quaternion
+                            ? currentWireframe.quaternion.clone()
+                            : new THREE.Quaternion(0, 0, 0, 1);
+                        const inverseQuat = currentObjectQuat.clone().invert();
+                        const rotatedApproach = originalApproach.applyQuaternion(inverseQuat).normalize();
+                        
+                        // Orient gripper to match the rotated approach vector
                         const defaultDir = new THREE.Vector3(0, 0, -1);
                         const quaternion = new THREE.Quaternion();
-                        quaternion.setFromUnitVectors(defaultDir, originalApproach);
+                        quaternion.setFromUnitVectors(defaultDir, rotatedApproach);
                         sphere.userData.gripperGroup.quaternion.copy(quaternion);
                         
-                        // Update gripper position offset
+                        // Position offset along the rotated approach direction
                         const offsetDistance = 0.008;
-                        const offsetPosition = originalApproach.clone().multiplyScalar(offsetDistance);
+                        const offsetPosition = rotatedApproach.clone().multiplyScalar(offsetDistance);
+                        sphere.userData.gripperGroup.position.copy(offsetPosition);
+                    }
+                });
+            }
+
+            function updateGraspPointOrientationsFromAnchor(anchor) {
+                // Apply residual rotation from the anchor pose to the current pose.
+                if (!currentWireframe || !graspPointsList) return;
+                
+                // Current object rotation (use sliderAngles if present for stability)
+                const rotAngles = currentWireframe.userData && currentWireframe.userData.sliderAngles
+                    ? currentWireframe.userData.sliderAngles
+                    : currentWireframe.rotation;
+                
+                // Build residual Euler by subtracting anchor angles for non-anchored axes;
+                // keep 0 for anchored (canonical) axes (they are locked).
+                const dx = anchor.axes.includes('x') ? 0 : (rotAngles.x - anchor.euler.x);
+                const dy = anchor.axes.includes('y') ? 0 : (rotAngles.y - anchor.euler.y);
+                const dz = anchor.axes.includes('z') ? 0 : (rotAngles.z - anchor.euler.z);
+                
+                // Current full object quaternion and its inverse
+                const qTotal = currentWireframe.quaternion.clone();
+                const qTotalInv = qTotal.clone().invert();
+                
+                // Anchor quaternion (object orientation at canonical pose)
+                const qAnchor = new THREE.Quaternion().setFromEuler(new THREE.Euler(
+                    anchor.euler.x, anchor.euler.y, anchor.euler.z, 'XYZ'
+                ));
+                
+                // Residual quaternion from anchor to now (in XYZ order)
+                const qResidual = new THREE.Quaternion().setFromEuler(new THREE.Euler(
+                    dx, dy, dz, 'XYZ'
+                ));
+                
+                // desiredWorld = qResidual * qWorldCanonical
+                // where qWorldCanonical = qAnchor * qOriginal
+                graspPointsList.forEach(sphere => {
+                    if (sphere.userData.gripperGroup && sphere.userData.originalApproachVector) {
+                        const originalApproach = sphere.userData.originalApproachVector.clone();
+                        const defaultDir = new THREE.Vector3(0, 0, -1);
+                        const qOriginal = new THREE.Quaternion().setFromUnitVectors(defaultDir, originalApproach);
+                        const qWorldCanonical = qAnchor.clone().multiply(qOriginal);
+                        
+                        const desiredWorld = qResidual.clone().multiply(qWorldCanonical);
+                        const localQuat = qTotalInv.clone().multiply(desiredWorld);
+                        sphere.userData.gripperGroup.quaternion.copy(localQuat);
+                        
+                        // Position offset: keep along canonical approach vector in WORLD space
+                        const offsetDistance = 0.008;
+                        const canonicalApproachWorld = originalApproach.clone().applyQuaternion(qAnchor).normalize();
+                        // Convert world direction to local (sphere) space
+                        const canonicalApproachLocal = canonicalApproachWorld.clone().applyQuaternion(qTotalInv).normalize();
+                        const offsetPosition = canonicalApproachLocal.multiplyScalar(offsetDistance);
                         sphere.userData.gripperGroup.position.copy(offsetPosition);
                     }
                 });
@@ -1320,7 +1443,11 @@ async def read_root():
             
             function resetObjectRotation() {
                 if (!selectedObject) return;
-                selectedObject.rotation.set(0, 0, 0);
+                // Reset quaternion and our slider angles
+                selectedObject.quaternion.set(0, 0, 0, 1);
+                if (selectedObject.userData) {
+                    selectedObject.userData.sliderAngles = { x: 0, y: 0, z: 0 };
+                }
                 checkFoldSymmetry();
                 updateSelectedObjectInfo();  // Update to refresh quaternion display
                 updateStatus(`Reset rotation for ${selectedObject.userData.displayName}`);
@@ -1450,6 +1577,8 @@ async def read_root():
                     scene.remove(groundTruthWireframe);
                     groundTruthWireframe = null;
                 }
+                // Reset canonical anchor
+                canonicalAnchor = { active: false, axes: [], euler: { x: 0, y: 0, z: 0 } };
                 
                 sceneObjects = [];
                 selectedObject = null;
