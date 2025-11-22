@@ -1367,12 +1367,22 @@ async def read_root():
                     }
                     
                     // Update fold values from loaded data
-                    objectFoldValues[currentObjectName] = { ...foldAxes };
+                    // Accept both legacy numeric form and new detailed form with { fold, quaternions }
+                    const parsed = {};
+                    ['x','y','z'].forEach(axis => {
+                        const val = foldAxes[axis];
+                        if (val && typeof val === 'object' && typeof val.fold === 'number') {
+                            parsed[axis] = val.fold;
+                        } else if (typeof val === 'number') {
+                            parsed[axis] = val;
+                        }
+                    });
+                    objectFoldValues[currentObjectName] = parsed;
                     
                     // Update input fields
-                    document.getElementById('foldXInput').value = foldAxes.x || '';
-                    document.getElementById('foldYInput').value = foldAxes.y || '';
-                    document.getElementById('foldZInput').value = foldAxes.z || '';
+                    document.getElementById('foldXInput').value = parsed.x || '';
+                    document.getElementById('foldYInput').value = parsed.y || '';
+                    document.getElementById('foldZInput').value = parsed.z || '';
                     
                     // Check symmetry with loaded values
                     checkFoldSymmetry();
@@ -1466,6 +1476,34 @@ async def read_root():
                 updateStatus("Camera reset to default position");
             }
             
+            function computeAxisFoldQuaternions(axis, fold) {
+                // Compute fold quaternions using the same Euler -> Quaternion path
+                // used by the RPY (rotation) controls, to keep values identical
+                // to what's displayed in the Quaternion panel.
+                const results = [];
+                for (let i = 0; i < fold; i++) {
+                    const angleDeg = (360 / fold) * i;
+                    const angleRad = angleDeg * Math.PI / 180;
+                    const euler = new THREE.Euler(
+                        axis === 'x' ? angleRad : 0,
+                        axis === 'y' ? angleRad : 0,
+                        axis === 'z' ? angleRad : 0,
+                        'XYZ'
+                    );
+                    const q = new THREE.Quaternion().setFromEuler(euler);
+                    results.push({
+                        angle_deg: angleDeg,
+                        quaternion: {
+                            x: Number(q.x.toFixed(6)),
+                            y: Number(q.y.toFixed(6)),
+                            z: Number(q.z.toFixed(6)),
+                            w: Number(q.w.toFixed(6)),
+                        }
+                    });
+                }
+                return results;
+            }
+
             async function exportSymmetry() {
                 // Export fold symmetry data for the current object
                 if (!currentObjectName) {
@@ -1481,9 +1519,21 @@ async def read_root():
                     return;
                 }
                 
+                // Build detailed fold_axes with quaternion data for each axis
+                const foldAxesDetailed = {};
+                ['x','y','z'].forEach(axis => {
+                    const f = foldValues[axis];
+                    if (f && f > 0) {
+                        foldAxesDetailed[axis] = {
+                            fold: f,
+                            quaternions: computeAxisFoldQuaternions(axis, f)
+                        };
+                    }
+                });
+
                 const exportData = {
                     object_name: currentObjectName,
-                    fold_axes: foldValues
+                    fold_axes: foldAxesDetailed
                 };
                 
                 try {
