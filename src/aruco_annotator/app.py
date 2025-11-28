@@ -136,6 +136,104 @@ class MarkerData:
         """Set in-plane rotation in degrees"""
         self.in_plane_rotation_deg = degrees % 360.0
     
+    def _get_quaternion_from_normal(self):
+        """
+        Get quaternion for primary axis faces based on the actual stored normal.
+        This computes the quaternion directly from the normal vector, avoiding gimbal lock.
+        Returns (quaternion, is_primary_axis) tuple.
+        Quaternion format: [x, y, z, w]
+        """
+        normal = self.face_normal
+        in_plane_rad = np.deg2rad(self.in_plane_rotation_deg)
+        
+        # Check if this is a primary axis face
+        is_primary = (np.any(np.allclose(normal, [1, 0, 0], atol=1e-6)) or
+                     np.any(np.allclose(normal, [-1, 0, 0], atol=1e-6)) or
+                     np.any(np.allclose(normal, [0, 1, 0], atol=1e-6)) or
+                     np.any(np.allclose(normal, [0, -1, 0], atol=1e-6)) or
+                     np.any(np.allclose(normal, [0, 0, 1], atol=1e-6)) or
+                     np.any(np.allclose(normal, [0, 0, -1], atol=1e-6)))
+        
+        if not is_primary:
+            return None, False
+        
+        # Compute base rotation matrix from the actual normal (same as _calculate_base_rotation)
+        z_world = np.array([0.0, 0.0, 1.0])
+        
+        if np.allclose(normal, z_world, atol=1e-6):
+            # Top face: no base rotation
+            R_base = np.eye(3)
+        elif np.allclose(normal, -z_world, atol=1e-6):
+            # Bottom face: roll = π
+            R_base = Rotation.from_euler('x', 180, degrees=True).as_matrix()
+        else:
+            # General case: rotate Z-axis to align with normal
+            rotation_axis = np.cross(z_world, normal)
+            rotation_axis = rotation_axis / (np.linalg.norm(rotation_axis) + 1e-8)
+            rotation_angle = np.arccos(np.clip(np.dot(z_world, normal), -1.0, 1.0))
+            R_base = Rotation.from_rotvec(rotation_angle * rotation_axis).as_matrix()
+        
+        # Convert base rotation to quaternion
+        rot_base = Rotation.from_matrix(R_base)
+        quat_base = rot_base.as_quat()  # [x, y, z, w]
+        
+        # Apply in-plane rotation (rotation around face normal, which is now Z+ in marker frame)
+        if abs(in_plane_rad) > 1e-6:
+            # Rotate around Z-axis in marker frame
+            rot_inplane = Rotation.from_euler('z', in_plane_rad, degrees=False)
+            quat_inplane = rot_inplane.as_quat()
+            
+            # Combine: quat_final = quat_base * quat_inplane
+            rot_combined = Rotation.from_quat(quat_base) * rot_inplane
+            quat = rot_combined.as_quat()
+        else:
+            quat = quat_base
+        
+        return quat, True
+    
+    def _rotation_matrix_to_euler_avoiding_gimbal_lock(self, R):
+        """
+        Convert rotation matrix to Euler angles (xyz) using quaternion as intermediate.
+        This avoids direct Euler extraction which can have gimbal lock issues.
+        """
+        # Convert to quaternion first, then to Euler
+        rot_scipy = Rotation.from_matrix(R)
+        quat = rot_scipy.as_quat()
+        rot_from_quat = Rotation.from_quat(quat)
+        
+        # Extract Euler angles with warning suppression
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            euler = rot_from_quat.as_euler('xyz')
+        
+        return euler
+        
+        # For arbitrary normals, use axis-angle as intermediate to avoid gimbal lock
+        # Convert rotation matrix to axis-angle, then to Euler
+        rot_scipy = Rotation.from_matrix(R)
+        
+        # Get axis-angle representation
+        axis_angle = rot_scipy.as_rotvec()
+        angle = np.linalg.norm(axis_angle)
+        
+        if angle < 1e-6:
+            # No rotation
+            return np.array([0.0, 0.0, 0.0])
+        
+        # Convert axis-angle to quaternion, then to Euler
+        # This avoids direct Euler extraction which can have gimbal lock issues
+        quat = rot_scipy.as_quat()
+        rot_from_quat = Rotation.from_quat(quat)
+        
+        # Extract Euler angles with warning suppression
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            euler = rot_from_quat.as_euler('xyz')
+        
+        return euler
+    
     def get_T_object_to_marker(self, cad_center_local):
         """
         Calculate T_object_to_marker (includes full rotation: base + in-plane)
@@ -154,19 +252,45 @@ class MarkerData:
         # Both position and cad_center are in object local space
         vec_object_to_marker = self.position - cad_center_local
         
-        # Get FULL rotation from object frame to marker frame (includes in-plane rotation)
-        # This is the complete rotation: base (geometric) + in-plane (user-adjustable)
-        R_object_to_marker_full = self.get_current_rotation_matrix().T
+        # Use quaternion as primary representation (no gimbal lock issues)
+        # For primary axis faces, compute quaternion directly from normal
+        quat, is_primary = self._get_quaternion_from_normal()
         
-        # Convert to quaternion and euler (suppress gimbal lock warnings)
-        rot_scipy = Rotation.from_matrix(R_object_to_marker_full)
-        quat = rot_scipy.as_quat()  # [x, y, z, w]
-        
-        # Get Euler angles with warning suppression
-        import warnings
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            euler = rot_scipy.as_euler('xyz')  # [roll, pitch, yaw]
+        if is_primary:
+            # For primary axis faces, compute Euler angles explicitly from normal
+            # This avoids gimbal lock issues when extracting from quaternion
+            normal = self.face_normal
+            in_plane_rad = np.deg2rad(self.in_plane_rotation_deg)
+            
+            # Compute base Euler angles based on normal direction
+            if np.allclose(normal, [1, 0, 0], atol=1e-6):  # Right face (+X)
+                euler = np.array([0.0, np.pi/2, in_plane_rad])
+            elif np.allclose(normal, [-1, 0, 0], atol=1e-6):  # Left face (-X)
+                euler = np.array([0.0, -np.pi/2, in_plane_rad])
+            elif np.allclose(normal, [0, 1, 0], atol=1e-6):  # Back face (+Y)
+                euler = np.array([-np.pi/2, 0.0, in_plane_rad])
+            elif np.allclose(normal, [0, -1, 0], atol=1e-6):  # Front face (-Y)
+                euler = np.array([np.pi/2, 0.0, in_plane_rad])
+            elif np.allclose(normal, [0, 0, 1], atol=1e-6):  # Top face (+Z)
+                euler = np.array([0.0, 0.0, in_plane_rad])
+            elif np.allclose(normal, [0, 0, -1], atol=1e-6):  # Bottom face (-Z)
+                euler = np.array([np.pi, 0.0, in_plane_rad])
+            else:
+                # Fallback: extract from quaternion
+                rot_from_quat = Rotation.from_quat(quat)
+                import warnings
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    euler = rot_from_quat.as_euler('xyz')
+                euler[2] = in_plane_rad  # Override yaw with in-plane rotation
+        else:
+            # For arbitrary normals, get rotation matrix and extract both Euler and quaternion
+            R_object_to_marker_full = self.get_current_rotation_matrix().T
+            rot_scipy = Rotation.from_matrix(R_object_to_marker_full)
+            quat = rot_scipy.as_quat()  # [x, y, z, w]
+            
+            # Get Euler angles using axis-angle to avoid gimbal lock
+            euler = self._rotation_matrix_to_euler_avoiding_gimbal_lock(R_object_to_marker_full)
         
         return {
             "position": {
@@ -336,9 +460,9 @@ def determine_face_type(normal: tuple) -> str:
     elif np.allclose(n, [0, -1, 0], atol=0.1):
         return "back"
     elif np.allclose(n, [1, 0, 0], atol=0.1):
-        return "left"
-    elif np.allclose(n, [-1, 0, 0], atol=0.1):
         return "right"
+    elif np.allclose(n, [-1, 0, 0], atol=0.1):
+        return "left"
     else:
         return "custom"
 
