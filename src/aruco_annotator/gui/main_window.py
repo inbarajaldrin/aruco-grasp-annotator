@@ -403,15 +403,38 @@ All dimensions converted to meters for robotics applications.</i>
                 # Collect annotations from UI in robotics format
                 robotics_markers = self.marker_panel.get_markers_for_robotics_export()
                 
-                # Create export data with robotics format
+                # Get common marker properties from first marker (all markers have same values)
+                aruco_dictionary = None
+                size = None
+                border_width = None
+                if robotics_markers and len(robotics_markers) > 0:
+                    # Get from first marker - all markers have same values in batch processing
+                    first_marker_info = list(self.marker_panel.markers.values())[0].aruco_info
+                    aruco_dictionary = first_marker_info.dictionary
+                    size = first_marker_info.size
+                    border_width = first_marker_info.border_width
+                
+                # Get CAD object info from viewer (common to all markers)
+                cad_object_info = None
+                if robotics_markers and len(robotics_markers) > 0:
+                    # Get CAD info from viewer (more reliable than from marker)
+                    cad_info = self.viewer_3d.get_cad_object_info()
+                    if cad_info:
+                        cad_object_info = {
+                            "center": list(cad_info["center"]),
+                            "dimensions": cad_info["dimensions"]
+                        }
+                
+                # Create export data with simplified format
                 export_data = {
-                    "export_type": "robotics_aruco_poses",
-                    "version": "2.0",
                     "exported_at": datetime.now().isoformat(),
                     "model_file": str(self.current_file) if self.current_file else None,
                     "total_markers": len(robotics_markers),
-                    "markers": robotics_markers,
-                    "description": "ArUco marker poses relative to CAD object center for robotics applications"
+                    "aruco_dictionary": aruco_dictionary,
+                    "size": size,
+                    "border_width": border_width,
+                    "cad_object_info": cad_object_info,
+                    "markers": robotics_markers
                 }
                 
                 # Write to file

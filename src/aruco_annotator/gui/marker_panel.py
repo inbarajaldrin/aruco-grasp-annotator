@@ -1,6 +1,8 @@
 """Panel for managing ArUco markers on the 3D model."""
 
 from typing import List, Dict, Any, Optional
+import numpy as np
+from scipy.spatial.transform import Rotation
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
@@ -922,12 +924,21 @@ This provides the reference point for robotics applications."""
             aruco_info = item.aruco_info
             pose_info = aruco_info.cad_object_pose
             
-            # Create robotics export format
+            # Convert RPY to quaternion for relative pose
+            rel_roll = pose_info["relative_rotation"][0]
+            rel_pitch = pose_info["relative_rotation"][1]
+            rel_yaw = pose_info["relative_rotation"][2]
+            rel_quat = Rotation.from_euler('xyz', [rel_roll, rel_pitch, rel_yaw], degrees=False).as_quat()
+            
+            # Convert RPY to quaternion for absolute pose
+            abs_roll = aruco_info.rotation[0]
+            abs_pitch = aruco_info.rotation[1]
+            abs_yaw = aruco_info.rotation[2]
+            abs_quat = Rotation.from_euler('xyz', [abs_roll, abs_pitch, abs_yaw], degrees=False).as_quat()
+            
+            # Create robotics export format (common fields moved to top level)
             robotics_marker = {
-                "aruco_dictionary": aruco_info.dictionary,
                 "aruco_id": aruco_info.marker_id,
-                "size": aruco_info.size,
-                "border_width": aruco_info.border_width,
                 "face_type": pose_info["face_type"],
                 "surface_normal": pose_info["surface_normal"],
                 "pose_relative_to_cad_center": {
@@ -937,9 +948,15 @@ This provides the reference point for robotics applications."""
                         "z": pose_info["relative_position"][2]
                     },
                     "rotation": {
-                        "roll": pose_info["relative_rotation"][0],
-                        "pitch": pose_info["relative_rotation"][1],
-                        "yaw": pose_info["relative_rotation"][2]
+                        "roll": rel_roll,
+                        "pitch": rel_pitch,
+                        "yaw": rel_yaw,
+                        "quaternion": {
+                            "x": float(rel_quat[0]),
+                            "y": float(rel_quat[1]),
+                            "z": float(rel_quat[2]),
+                            "w": float(rel_quat[3])
+                        }
                     }
                 },
                 "pose_absolute": {
@@ -949,14 +966,16 @@ This provides the reference point for robotics applications."""
                         "z": aruco_info.position[2]
                     },
                     "rotation": {
-                        "roll": aruco_info.rotation[0],
-                        "pitch": aruco_info.rotation[1],
-                        "yaw": aruco_info.rotation[2]
+                        "roll": abs_roll,
+                        "pitch": abs_pitch,
+                        "yaw": abs_yaw,
+                        "quaternion": {
+                            "x": float(abs_quat[0]),
+                            "y": float(abs_quat[1]),
+                            "z": float(abs_quat[2]),
+                            "w": float(abs_quat[3])
+                        }
                     }
-                },
-                "cad_object_info": {
-                    "center": pose_info["cad_center"],
-                    "dimensions": pose_info["cad_dimensions"]
                 }
             }
             

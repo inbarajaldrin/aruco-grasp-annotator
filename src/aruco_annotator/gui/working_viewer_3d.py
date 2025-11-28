@@ -1140,6 +1140,34 @@ Watertight: {info['is_watertight']}"""
         center = (v1 + v2 + v3) / 3.0
         return tuple(center)
     
+    def calculate_triangle_normal(self, triangle_idx: int) -> tuple:
+        """Calculate the normal vector of a triangle face."""
+        if self.mesh is None:
+            return (0.0, 0.0, 1.0)  # Default to Z-up
+            
+        triangles = np.asarray(self.mesh.triangles)
+        vertices = np.asarray(self.mesh.vertices)
+        
+        if triangle_idx >= len(triangles):
+            return (0.0, 0.0, 1.0)  # Default to Z-up
+            
+        # Get the three vertices of the triangle
+        triangle = triangles[triangle_idx]
+        v1, v2, v3 = vertices[triangle[0]], vertices[triangle[1]], vertices[triangle[2]]
+        
+        # Calculate normal using cross product
+        edge1 = v2 - v1
+        edge2 = v3 - v1
+        normal = np.cross(edge1, edge2)
+        normal_length = np.linalg.norm(normal)
+        
+        if normal_length < 1e-8:
+            return (0.0, 0.0, 1.0)  # Default to Z-up if degenerate triangle
+        
+        # Normalize the normal vector
+        normal = normal / normal_length
+        return tuple(normal)
+    
     def group_triangles_by_face(self, triangles, vertices):
         """Improved face detection algorithm using normal vectors, spatial connectivity, and coplanarity."""
         print("🔍 Starting improved face detection algorithm...")
@@ -1391,11 +1419,12 @@ Watertight: {info['is_watertight']}"""
                             import random
                             triangle_idx = random.randint(0, len(triangles) - 1)
                             face_center = self.calculate_face_center_from_triangle(triangle_idx)
+                            face_normal = self.calculate_triangle_normal(triangle_idx)
                             
                             if face_center:
-                                # Use QTimer to emit signal from main thread
-                                QTimer.singleShot(0, lambda: self.point_picked.emit(face_center, (0.0, 0.0, 1.0)))
-                                print(f"Placed marker at face center: {face_center}")
+                                # Use QTimer to emit signal from main thread with computed normal
+                                QTimer.singleShot(0, lambda: self.point_picked.emit(face_center, face_normal))
+                                print(f"Placed marker at face center: {face_center} with normal: {face_normal}")
                         else:
                             # Fallback to bbox center if no triangles
                             bbox = self.mesh.get_axis_aligned_bounding_box()
@@ -1528,11 +1557,13 @@ Watertight: {info['is_watertight']}"""
                         
                         print(f"🎯 Random face selected: Face {face_idx + 1} of {len(face_groups)}")
                         print(f"   Face center: ({face_center[0]:.3f}, {face_center[1]:.3f}, {face_center[2]:.3f})")
+                        print(f"   Face normal: ({face_normal[0]:.3f}, {face_normal[1]:.3f}, {face_normal[2]:.3f})")
                         print(f"   Face area: {face_area:.4f}")
                         print(f"   Triangles in face: {len(triangle_indices)}")
                         
-                        self.point_picked.emit(tuple(face_center), (0.0, 0.0, 1.0))
-                        print(f"✅ Marker placed at random face center: {face_center}")
+                        # Use computed face normal instead of hardcoded Z-up
+                        self.point_picked.emit(tuple(face_center), tuple(face_normal))
+                        print(f"✅ Marker placed at random face center: {face_center} with normal: {face_normal}")
                         
                         # Hide the placement button
                         if hasattr(self, 'click_place_btn') and self.click_place_btn is not None:
@@ -1542,9 +1573,10 @@ Watertight: {info['is_watertight']}"""
                         # Fallback to old behavior if no faces found
                         triangle_idx = random.randint(0, len(triangles) - 1)
                         face_center = self.calculate_face_center_from_triangle(triangle_idx)
+                        face_normal = self.calculate_triangle_normal(triangle_idx)
                         if face_center:
-                            self.point_picked.emit(face_center, (0.0, 0.0, 1.0))
-                            print(f"Marker placed at triangle center: {face_center}")
+                            self.point_picked.emit(face_center, face_normal)
+                            print(f"Marker placed at triangle center: {face_center} with normal: {face_normal}")
                 else:
                     # Fallback to bbox center
                     bbox = self.mesh.get_axis_aligned_bounding_box()
@@ -1588,41 +1620,41 @@ Watertight: {info['is_watertight']}"""
                     print(f"   Runtime center: ({center[0]:.3f}, {center[1]:.3f}, {center[2]:.3f})")
                 
                 # Define the 6 orthogonal faces with their normal vectors
-                # Note: Normals point INWARD toward the object center for proper ArUco orientation
+                # Note: Normals point OUTWARD from the object center so ArUco markers face outward (visible from outside)
                 faces = [
                     # X-axis faces (Left and Right)
                     {
                         'center': np.array([min_bound[0], center[1], center[2]]),
-                        'normal': np.array([1.0, 0.0, 0.0]),  # Inward (toward center)
+                        'normal': np.array([-1.0, 0.0, 0.0]),  # Outward (away from center, toward -X)
                         'name': "Left Face (-X)"
                     },
                     {
                         'center': np.array([max_bound[0], center[1], center[2]]),
-                        'normal': np.array([-1.0, 0.0, 0.0]),  # Inward (toward center)
+                        'normal': np.array([1.0, 0.0, 0.0]),  # Outward (away from center, toward +X)
                         'name': "Right Face (+X)"
                     },
                     
                     # Y-axis faces (Front and Back)
                     {
                         'center': np.array([center[0], min_bound[1], center[2]]),
-                        'normal': np.array([0.0, 1.0, 0.0]),  # Inward (toward center)
+                        'normal': np.array([0.0, -1.0, 0.0]),  # Outward (away from center, toward -Y)
                         'name': "Front Face (-Y)"
                     },
                     {
                         'center': np.array([center[0], max_bound[1], center[2]]),
-                        'normal': np.array([0.0, -1.0, 0.0]),  # Inward (toward center)
+                        'normal': np.array([0.0, 1.0, 0.0]),  # Outward (away from center, toward +Y)
                         'name': "Back Face (+Y)"
                     },
                     
                     # Z-axis faces (Bottom and Top)
                     {
                         'center': np.array([center[0], center[1], min_bound[2]]),
-                        'normal': np.array([0.0, 0.0, 1.0]),  # Inward (toward center)
+                        'normal': np.array([0.0, 0.0, -1.0]),  # Outward (away from center, toward -Z)
                         'name': "Bottom Face (-Z)"
                     },
                     {
                         'center': np.array([center[0], center[1], max_bound[2]]),
-                        'normal': np.array([0.0, 0.0, -1.0]),  # Inward (toward center)
+                        'normal': np.array([0.0, 0.0, 1.0]),  # Outward (away from center, toward +Z)
                         'name': "Top Face (+Z)"
                     }
                 ]
@@ -2050,10 +2082,14 @@ Watertight: {info['is_watertight']}"""
             # Create face picker dialog
             dialog = FacePickerDialog(self, triangles, vertices)
             if dialog.exec() == dialog.DialogCode.Accepted:
-                selected_face_center = dialog.get_selected_face_center()
-                if selected_face_center:
+                selected_face_data = dialog.selected_face_data
+                if selected_face_data:
+                    selected_face_center = tuple(selected_face_data['face_center'])
+                    selected_face_normal = tuple(selected_face_data['face_normal'])
                     print(f"User selected face center: {selected_face_center}")
-                    self.point_picked.emit(selected_face_center, (0.0, 0.0, 1.0))
+                    print(f"User selected face normal: {selected_face_normal}")
+                    # Use computed face normal instead of hardcoded Z-up
+                    self.point_picked.emit(selected_face_center, selected_face_normal)
                     
                     # Hide the placement buttons
                     if hasattr(self, 'click_place_btn') and self.click_place_btn is not None:
@@ -2097,9 +2133,10 @@ Watertight: {info['is_watertight']}"""
             face_center, face_normal, face_area, triangle_indices = best_face
 
             print(f"Selected face center: ({face_center[0]:.3f}, {face_center[1]:.3f}, {face_center[2]:.3f})")
+            print(f"Selected face normal: ({face_normal[0]:.3f}, {face_normal[1]:.3f}, {face_normal[2]:.3f})")
             print(f"Selected face area: {face_area:.4f}")
-            # Place marker at the face center
-            self.point_picked.emit(tuple(face_center), (0.0, 0.0, 1.0))
+            # Place marker at the face center with computed normal
+            self.point_picked.emit(tuple(face_center), tuple(face_normal))
 
             # Hide placement buttons after successful placement
             self.disable_direct_placement_mode()
