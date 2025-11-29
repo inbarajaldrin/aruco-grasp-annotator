@@ -33,14 +33,18 @@ app.add_middleware(
 # Data directory path
 DATA_DIR = Path(__file__).parent.parent.parent / "data"
 
-# Available components
-COMPONENTS = [
-    "base_scaled70",
-    "fork_orange_scaled70", 
-    "fork_yellow_scaled70",
-    "line_brown_scaled70",
-    "line_red_scaled70"
-]
+def get_available_components():
+    """Dynamically discover components from wireframe directory."""
+    wireframe_dir = DATA_DIR / "wireframe"
+    components = []
+    
+    if wireframe_dir.exists():
+        for wireframe_file in wireframe_dir.glob("*_wireframe.json"):
+            # Extract component name by removing _wireframe.json suffix
+            component_name = wireframe_file.stem.replace("_wireframe", "")
+            components.append(component_name)
+    
+    return sorted(components)
 
 # Global assembly state
 assembly_state = {
@@ -77,15 +81,22 @@ async def read_root():
             }
             
             .sidebar {
-                width: 400px;
+                width: 350px;
                 background: rgba(255, 255, 255, 0.95);
                 backdrop-filter: blur(10px);
                 padding: 20px;
                 overflow-y: auto;
                 box-shadow: 2px 0 10px rgba(0,0,0,0.1);
-                border-right: 1px solid #ddd;
                 z-index: 10;
                 position: relative;
+            }
+            
+            .sidebar-left {
+                border-right: 1px solid #ddd;
+            }
+            
+            .sidebar-right {
+                border-left: 1px solid #ddd;
             }
             
             .main-viewer {
@@ -263,6 +274,20 @@ async def read_root():
                 outline: none;
                 border-color: #3498db;
                 box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.2);
+            }
+            
+            .input-group {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                margin-bottom: 8px;
+            }
+            
+            .input-group label {
+                min-width: 60px;
+                font-size: 13px;
+                color: #555;
+                font-weight: 500;
             }
             
             .control-buttons {
@@ -496,7 +521,7 @@ async def read_root():
     </head>
     <body>
         <div class="app-container">
-            <div class="sidebar">
+            <div class="sidebar sidebar-left">
                 <div class="instructions">
                     <h4>Assembly Instructions</h4>
                     <ul>
@@ -535,8 +560,8 @@ async def read_root():
                 <div class="controls-panel">
                     <h3>🎯 Grasp Points Visualization</h3>
                     <div class="assembly-controls">
-                        <input type="file" id="graspFileInput" accept=".json" style="display: none;" onchange="loadGraspPoints(event)">
-                        <button class="btn" onclick="document.getElementById('graspFileInput').click()">Load Grasp Points</button>
+                        <input type="file" id="graspFileInput" accept=".json" style="display: none;" onchange="loadGraspPointsFromFile(event)">
+                        <button class="btn" onclick="loadGraspPointsAuto()">Load Grasp Points</button>
                         <button class="btn btn-secondary" onclick="clearGraspPoints()">Clear Grasp Points</button>
                     </div>
                     <div id="graspInfo" style="font-size: 12px; color: #666; margin-top: 8px;">
@@ -551,8 +576,6 @@ async def read_root():
                     </div>
                 </div>
                 
-                <div id="selectedObjectInfo"></div>
-                
                 <div id="statusMessages"></div>
             </div>
             
@@ -563,6 +586,17 @@ async def read_root():
                     <div class="status-info">
                         <span id="objectCount">Objects: 0</span>
                         <span id="selectedInfo">Selected: None</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="sidebar sidebar-right">
+                <div id="selectedObjectInfo">
+                    <div class="controls-panel">
+                        <h3>🎛️ Object Transform</h3>
+                        <div class="loading" style="padding: 20px; text-align: center; color: #666;">
+                            Select an object to view and edit its transform
+                        </div>
                     </div>
                 </div>
             </div>
@@ -637,12 +671,39 @@ async def read_root():
                 const hemisphereLight = new THREE.HemisphereLight(0xffffbb, 0x080820, 0.3);
                 scene.add(hemisphereLight);
                 
-                // Grid and axes
+                // Grid - rotate to make it horizontal in XY plane (Z-up)
                 gridHelper = new THREE.GridHelper(1, 1, 0x444444, 0x222222);
                 gridHelper.rotateX(Math.PI / 2);  // Rotate 90 degrees to make it horizontal in XY plane
                 scene.add(gridHelper);
                 
-                axesHelper = new THREE.AxesHelper(0.2);
+                // Custom coordinate frame matching Blender convention (Z-up)
+                // Blender: X=Right (Red), Y=Forward (Green), Z=Up (Blue)
+                const axesLength = 0.2;
+                const axesGeometry = new THREE.BufferGeometry();
+                const axesMaterial = new THREE.LineBasicMaterial({ vertexColors: true });
+                
+                // Create axes: X (Red, Right), Y (Green, Forward), Z (Blue, Up)
+                const axesVertices = new Float32Array([
+                    0, 0, 0,  // Origin
+                    axesLength, 0, 0,  // X axis end (Right)
+                    0, 0, 0,  // Origin
+                    0, axesLength, 0,  // Y axis end (Forward)
+                    0, 0, 0,  // Origin
+                    0, 0, axesLength   // Z axis end (Up)
+                ]);
+                
+                const axesColors = new Float32Array([
+                    1, 0, 0,  // Red for origin
+                    1, 0, 0,  // Red for X
+                    0, 1, 0,  // Green for origin
+                    0, 1, 0,  // Green for Y
+                    0, 0, 1,  // Blue for origin
+                    0, 0, 1   // Blue for Z
+                ]);
+                
+                axesGeometry.setAttribute('position', new THREE.BufferAttribute(axesVertices, 3));
+                axesGeometry.setAttribute('color', new THREE.BufferAttribute(axesColors, 3));
+                axesHelper = new THREE.LineSegments(axesGeometry, axesMaterial);
                 scene.add(axesHelper);
                 
                 // Raycaster for object selection
@@ -761,15 +822,26 @@ async def read_root():
                 
                 try {
                     const response = await fetch('/api/components');
+                    
+                    if (!response.ok) {
+                        const errorText = await response.text();
+                        throw new Error(`HTTP ${response.status}: ${errorText}`);
+                    }
+                    
                     const components = await response.json();
+                    
+                    if (Object.keys(components).length === 0) {
+                        throw new Error("No components loaded. Check server logs for errors.");
+                    }
                     
                     loadedComponents = components;
                     updateComponentList();
                     showMessage(`Loaded ${Object.keys(components).length} components successfully!`, "success");
                     updateStatus("All components loaded - Click on component names to add to scene");
                 } catch (error) {
+                    console.error("Error loading components:", error);
                     showMessage(`Error loading components: ${error.message}`, "error");
-                    updateStatus("Error loading components");
+                    updateStatus("Error loading components - Check console for details");
                 }
             }
             
@@ -914,7 +986,14 @@ async def read_root():
                 const container = document.getElementById('selectedObjectInfo');
                 
                 if (!selectedObject) {
-                    container.innerHTML = '';
+                    container.innerHTML = `
+                        <div class="controls-panel">
+                            <h3>🎛️ Object Transform</h3>
+                            <div class="loading" style="padding: 20px; text-align: center; color: #666;">
+                                Select an object to view and edit its transform
+                            </div>
+                        </div>
+                    `;
                     return;
                 }
                 
@@ -922,81 +1001,102 @@ async def read_root():
                 const pos = obj.position;
                 const rot = obj.rotation;
                 
+                // Calculate quaternion from Euler angles
+                const c1 = Math.cos(rot.x / 2);
+                const c2 = Math.cos(rot.y / 2);
+                const c3 = Math.cos(rot.z / 2);
+                const s1 = Math.sin(rot.x / 2);
+                const s2 = Math.sin(rot.y / 2);
+                const s3 = Math.sin(rot.z / 2);
+                const quat = {
+                    x: s1 * c2 * c3 - c1 * s2 * s3,
+                    y: c1 * s2 * c3 + s1 * c2 * s3,
+                    z: c1 * c2 * s3 - s1 * s2 * c3,
+                    w: c1 * c2 * c3 + s1 * s2 * s3
+                };
+                
                 container.innerHTML = `
-                    <div class="precision-controls">
-                        <div class="selected-object">
-                            <h4>${obj.userData.displayName || obj.userData.name}</h4>
-                            <p>Type: ${obj.userData.type} | ID: ${obj.userData.id}</p>
+                    <div class="controls-panel">
+                        <h3>🎛️ Object Transform</h3>
+                        
+                        <div class="selected-object" style="margin-bottom: 15px; padding: 10px; background: #f5f5f5; border-radius: 4px;">
+                            <h4 style="margin: 0 0 5px 0; color: #2c3e50;">${obj.userData.displayName || obj.userData.name}</h4>
+                            <p style="margin: 0; font-size: 12px; color: #666;">Type: ${obj.userData.type}</p>
                         </div>
                         
-                        <div class="control-group">
-                            <h4>Position</h4>
-                            <div class="control-row">
-                                <span class="control-label">X:</span>
-                                <input type="number" class="control-input" step="0.01" value="${pos.x.toFixed(3)}" 
-                                       onchange="setObjectPosition('x', this.value)">
-                                <div class="control-buttons">
-                                    <button class="btn btn-small axis-btn x" onclick="moveObject('x', -0.01)">-</button>
-                                    <button class="btn btn-small axis-btn x" onclick="moveObject('x', 0.01)">+</button>
-                                </div>
-                            </div>
-                            <div class="control-row">
-                                <span class="control-label">Y:</span>
-                                <input type="number" class="control-input" step="0.01" value="${pos.y.toFixed(3)}" 
-                                       onchange="setObjectPosition('y', this.value)">
-                                <div class="control-buttons">
-                                    <button class="btn btn-small axis-btn y" onclick="moveObject('y', -0.01)">-</button>
-                                    <button class="btn btn-small axis-btn y" onclick="moveObject('y', 0.01)">+</button>
-                                </div>
-                            </div>
-                            <div class="control-row">
-                                <span class="control-label">Z (Up):</span>  <!-- Added "(Up)" to clarify this is vertical -->
-                                <input type="number" class="control-input" step="0.01" value="${pos.z.toFixed(3)}" 
-                                       onchange="setObjectPosition('z', this.value)">
-                                <div class="control-buttons">
-                                    <button class="btn btn-small axis-btn z" onclick="moveObject('z', -0.01)">-</button>
-                                    <button class="btn btn-small axis-btn z" onclick="moveObject('z', 0.01)">+</button>
-                                </div>
+                        <h4 style="margin-top: 15px; margin-bottom: 5px; font-size: 14px; color: #555;">Position (m)</h4>
+                        <div class="input-group" style="margin-bottom: 8px;">
+                            <label style="min-width: 30px;">X:</label>
+                            <input type="number" id="objPosX" class="control-input" step="0.001" value="${pos.x.toFixed(3)}" 
+                                   onchange="setObjectPosition('x', parseFloat(this.value))">
+                            <div class="control-buttons">
+                                <button class="btn btn-small axis-btn x" onclick="moveObject('x', -0.01)">-</button>
+                                <button class="btn btn-small axis-btn x" onclick="moveObject('x', 0.01)">+</button>
                             </div>
                         </div>
-                        
-                        <div class="control-group">
-                            <h4>Rotation (degrees)</h4>
-                            <div class="control-row">
-                                <span class="control-label">X:</span>
-                                <input type="number" class="control-input" step="5" value="${(rot.x * 180 / Math.PI).toFixed(1)}" 
-                                       onchange="setObjectRotation('x', this.value * Math.PI / 180)">
-                                <div class="control-buttons">
-                                    <button class="btn btn-small axis-btn x" onclick="rotateObject('x', -Math.PI / 36)">-</button>
-                                    <button class="btn btn-small axis-btn x" onclick="rotateObject('x', Math.PI / 36)">+</button>
-                                </div>
+                        <div class="input-group" style="margin-bottom: 8px;">
+                            <label style="min-width: 30px;">Y:</label>
+                            <input type="number" id="objPosY" class="control-input" step="0.001" value="${pos.y.toFixed(3)}" 
+                                   onchange="setObjectPosition('y', parseFloat(this.value))">
+                            <div class="control-buttons">
+                                <button class="btn btn-small axis-btn y" onclick="moveObject('y', -0.01)">-</button>
+                                <button class="btn btn-small axis-btn y" onclick="moveObject('y', 0.01)">+</button>
                             </div>
-                            <div class="control-row">
-                                <span class="control-label">Y:</span>
-                                <input type="number" class="control-input" step="5" value="${(rot.y * 180 / Math.PI).toFixed(1)}" 
-                                       onchange="setObjectRotation('y', this.value * Math.PI / 180)">
-                                <div class="control-buttons">
-                                    <button class="btn btn-small axis-btn y" onclick="rotateObject('y', -Math.PI / 36)">-</button>
-                                    <button class="btn btn-small axis-btn y" onclick="rotateObject('y', Math.PI / 36)">+</button>
-                                </div>
-                            </div>
-                            <div class="control-row">
-                                <span class="control-label">Z:</span>
-                                <input type="number" class="control-input" step="5" value="${(rot.z * 180 / Math.PI).toFixed(1)}" 
-                                       onchange="setObjectRotation('z', this.value * Math.PI / 180)">
-                                <div class="control-buttons">
-                                    <button class="btn btn-small axis-btn z" onclick="rotateObject('z', -Math.PI / 36)">-</button>
-                                    <button class="btn btn-small axis-btn z" onclick="rotateObject('z', Math.PI / 36)">+</button>
-                                </div>
+                        </div>
+                        <div class="input-group" style="margin-bottom: 15px;">
+                            <label style="min-width: 30px;">Z:</label>
+                            <input type="number" id="objPosZ" class="control-input" step="0.001" value="${pos.z.toFixed(3)}" 
+                                   onchange="setObjectPosition('z', parseFloat(this.value))">
+                            <div class="control-buttons">
+                                <button class="btn btn-small axis-btn z" onclick="moveObject('z', -0.01)">-</button>
+                                <button class="btn btn-small axis-btn z" onclick="moveObject('z', 0.01)">+</button>
                             </div>
                         </div>
                         
-                        <div class="control-group">
-                            <h4>Quick Actions</h4>
-                            <div class="quick-actions">
+                        <h4 style="margin-top: 15px; margin-bottom: 5px; font-size: 14px; color: #555;">Rotation (degrees)</h4>
+                        <div class="input-group" style="margin-bottom: 8px;">
+                            <label style="min-width: 60px;">Roll (X):</label>
+                            <input type="number" id="objRotX" class="control-input" step="1" value="${(rot.x * 180 / Math.PI).toFixed(1)}" 
+                                   onchange="setObjectRotation('x', this.value * Math.PI / 180)">
+                            <div class="control-buttons">
+                                <button class="btn btn-small axis-btn x" onclick="rotateObject('x', -Math.PI / 36)">-</button>
+                                <button class="btn btn-small axis-btn x" onclick="rotateObject('x', Math.PI / 36)">+</button>
+                            </div>
+                        </div>
+                        <div class="input-group" style="margin-bottom: 8px;">
+                            <label style="min-width: 60px;">Pitch (Y):</label>
+                            <input type="number" id="objRotY" class="control-input" step="1" value="${(rot.y * 180 / Math.PI).toFixed(1)}" 
+                                   onchange="setObjectRotation('y', this.value * Math.PI / 180)">
+                            <div class="control-buttons">
+                                <button class="btn btn-small axis-btn y" onclick="rotateObject('y', -Math.PI / 36)">-</button>
+                                <button class="btn btn-small axis-btn y" onclick="rotateObject('y', Math.PI / 36)">+</button>
+                            </div>
+                        </div>
+                        <div class="input-group" style="margin-bottom: 15px;">
+                            <label style="min-width: 60px;">Yaw (Z):</label>
+                            <input type="number" id="objRotZ" class="control-input" step="1" value="${(rot.z * 180 / Math.PI).toFixed(1)}" 
+                                   onchange="setObjectRotation('z', this.value * Math.PI / 180)">
+                            <div class="control-buttons">
+                                <button class="btn btn-small axis-btn z" onclick="rotateObject('z', -Math.PI / 36)">-</button>
+                                <button class="btn btn-small axis-btn z" onclick="rotateObject('z', Math.PI / 36)">+</button>
+                            </div>
+                        </div>
+                        
+                        <button class="btn btn-secondary" onclick="resetObjectPosition(); resetObjectRotation();" style="margin-top: 10px; width: 100%;">Reset to Origin</button>
+                        
+                        <h4 style="margin-top: 15px; margin-bottom: 5px; font-size: 14px; color: #555;">Current Pose</h4>
+                        <div style="background: #f5f5f5; padding: 10px; border-radius: 4px; font-size: 12px; font-family: monospace; margin-bottom: 10px;">
+                            <div><strong>Position:</strong> <span id="objCurrentPos">(${pos.x.toFixed(3)}, ${pos.y.toFixed(3)}, ${pos.z.toFixed(3)})</span></div>
+                            <div style="margin-top: 5px;"><strong>RPY:</strong> <span id="objCurrentRPY">(${(rot.x * 180 / Math.PI).toFixed(1)}°, ${(rot.y * 180 / Math.PI).toFixed(1)}°, ${(rot.z * 180 / Math.PI).toFixed(1)}°)</span></div>
+                            <div style="margin-top: 5px;"><strong>Quaternion:</strong> <span id="objCurrentQuat">(${quat.x.toFixed(4)}, ${quat.y.toFixed(4)}, ${quat.z.toFixed(4)}, ${quat.w.toFixed(4)})</span></div>
+                        </div>
+                        
+                        <div class="control-group" style="margin-top: 15px;">
+                            <h4 style="font-size: 14px; margin-bottom: 8px;">Quick Actions</h4>
+                            <div style="display: flex; gap: 5px; flex-wrap: wrap;">
                                 <button class="btn btn-small" onclick="resetObjectPosition()">Reset Position</button>
                                 <button class="btn btn-small" onclick="resetObjectRotation()">Reset Rotation</button>
-                                <button class="btn btn-small btn-secondary" onclick="deleteSelectedObject()">Delete</button>
+                                <button class="btn btn-small btn-secondary" onclick="deleteSelectedObject()" style="flex: 1;">Delete</button>
                             </div>
                         </div>
                     </div>
@@ -1041,42 +1141,84 @@ async def read_root():
             function setObjectPosition(axis, value) {
                 if (!selectedObject) return;
                 selectedObject.position[axis] = parseFloat(value);
-                updateStatus(`Moved ${selectedObject.userData.displayName} ${axis.toUpperCase()}: ${value}`);
+                updateSelectedObjectInfo();
+                updateCurrentPoseDisplay();
+                updateStatus(`Set ${selectedObject.userData.displayName} ${axis.toUpperCase()} position: ${value}`);
             }
             
             function setObjectRotation(axis, value) {
                 if (!selectedObject) return;
                 selectedObject.rotation[axis] = parseFloat(value);
-                updateStatus(`Rotated ${selectedObject.userData.displayName} ${axis.toUpperCase()}: ${(value * 180 / Math.PI).toFixed(1)}°`);
+                updateSelectedObjectInfo();
+                updateCurrentPoseDisplay();
+                updateStatus(`Set ${selectedObject.userData.displayName} ${axis.toUpperCase()} rotation: ${(value * 180 / Math.PI).toFixed(1)}°`);
             }
             
             function moveObject(axis, delta) {
                 if (!selectedObject) return;
                 selectedObject.position[axis] += delta;
                 updateSelectedObjectInfo();
+                updateCurrentPoseDisplay();
                 updateStatus(`Moved ${selectedObject.userData.displayName} ${axis.toUpperCase()}: ${selectedObject.position[axis].toFixed(3)}`);
             }
+            window.moveObject = moveObject;
             
             function rotateObject(axis, delta) {
                 if (!selectedObject) return;
                 selectedObject.rotation[axis] += delta;
                 updateSelectedObjectInfo();
+                updateCurrentPoseDisplay();
                 updateStatus(`Rotated ${selectedObject.userData.displayName} ${axis.toUpperCase()}: ${(selectedObject.rotation[axis] * 180 / Math.PI).toFixed(1)}°`);
+            }
+            window.rotateObject = rotateObject;
+            
+            function updateCurrentPoseDisplay() {
+                if (!selectedObject) return;
+                
+                const pos = selectedObject.position;
+                const rot = selectedObject.rotation;
+                
+                // Calculate quaternion from Euler angles
+                const c1 = Math.cos(rot.x / 2);
+                const c2 = Math.cos(rot.y / 2);
+                const c3 = Math.cos(rot.z / 2);
+                const s1 = Math.sin(rot.x / 2);
+                const s2 = Math.sin(rot.y / 2);
+                const s3 = Math.sin(rot.z / 2);
+                const quat = {
+                    x: s1 * c2 * c3 - c1 * s2 * s3,
+                    y: c1 * s2 * c3 + s1 * c2 * s3,
+                    z: c1 * c2 * s3 - s1 * s2 * c3,
+                    w: c1 * c2 * c3 + s1 * s2 * s3
+                };
+                
+                // Update display elements if they exist
+                const posEl = document.getElementById('objCurrentPos');
+                const rpyEl = document.getElementById('objCurrentRPY');
+                const quatEl = document.getElementById('objCurrentQuat');
+                
+                if (posEl) posEl.textContent = `(${pos.x.toFixed(3)}, ${pos.y.toFixed(3)}, ${pos.z.toFixed(3)})`;
+                if (rpyEl) rpyEl.textContent = `(${(rot.x * 180 / Math.PI).toFixed(1)}°, ${(rot.y * 180 / Math.PI).toFixed(1)}°, ${(rot.z * 180 / Math.PI).toFixed(1)}°)`;
+                if (quatEl) quatEl.textContent = `(${quat.x.toFixed(4)}, ${quat.y.toFixed(4)}, ${quat.z.toFixed(4)}, ${quat.w.toFixed(4)})`;
             }
             
             function resetObjectPosition() {
                 if (!selectedObject) return;
                 selectedObject.position.set(0, 0, 0);
                 updateSelectedObjectInfo();
+                updateCurrentPoseDisplay();
                 updateStatus(`Reset position for ${selectedObject.userData.displayName}`);
             }
+            window.resetObjectPosition = resetObjectPosition;
             
             function resetObjectRotation() {
                 if (!selectedObject) return;
                 selectedObject.rotation.set(0, 0, 0);
                 updateSelectedObjectInfo();
+                updateCurrentPoseDisplay();
                 updateStatus(`Reset rotation for ${selectedObject.userData.displayName}`);
             }
+            window.resetObjectRotation = resetObjectRotation;
             
             function deleteSelectedObject() {
                 if (!selectedObject) return;
@@ -1101,6 +1243,7 @@ async def read_root():
                 updateStatus(`Deleted ${objectName}`);
                 showMessage(`Deleted ${objectName}`, "info");
             }
+            window.deleteSelectedObject = deleteSelectedObject;
             
             function getComponentColor(componentName) {
                 const colors = {
@@ -1130,6 +1273,7 @@ async def read_root():
                 updateStatus("Scene cleared");
                 showMessage("All components removed from scene", "info");
             }
+            window.clearScene = clearScene;
             
             function toggleGrid() {
                 gridVisible = !gridVisible;
@@ -1137,6 +1281,7 @@ async def read_root():
                 axesHelper.visible = gridVisible;
                 updateStatus(`Grid ${gridVisible ? 'shown' : 'hidden'}`);
             }
+            window.toggleGrid = toggleGrid;
             
             function resetCamera() {
                 camera.position.set(0.5, -0.5, 0.5);  // Updated position
@@ -1145,37 +1290,58 @@ async def read_root():
                 controls.reset();
                 updateStatus("Camera reset to default position");
             }
+            window.resetCamera = resetCamera;
             
             async function exportAssembly() {
-                // TODO: Add quaternion representation alongside RPY rotation
-                // Include both rotation formats: {x, y, z} (RPY) and {x, y, z, w} (quaternion)
-                // This will make it easier to work with different coordinate systems
-                // and avoid conversion errors in downstream applications
+                // Export assembly with both RPY (Euler) and quaternion rotations for each object
+                // ArUco marker and wireframe data are loaded dynamically from data folders
+                
+                // Filter to only include components (exclude markers)
+                const components = sceneObjects
+                    .filter(obj => obj.userData.type === 'component')
+                    .map(obj => {
+                        const rot = obj.rotation;
+                        
+                        // Calculate quaternion from Euler angles (Three.js uses XYZ order)
+                        const c1 = Math.cos(rot.x / 2);
+                        const c2 = Math.cos(rot.y / 2);
+                        const c3 = Math.cos(rot.z / 2);
+                        const s1 = Math.sin(rot.x / 2);
+                        const s2 = Math.sin(rot.y / 2);
+                        const s3 = Math.sin(rot.z / 2);
+                        const quat = {
+                            x: s1 * c2 * c3 - c1 * s2 * s3,
+                            y: c1 * s2 * c3 + s1 * c2 * s3,
+                            z: c1 * c2 * s3 - s1 * s2 * c3,
+                            w: c1 * c2 * c3 + s1 * s2 * s3
+                        };
+                        
+                        return {
+                            name: obj.userData.name,
+                            position: {
+                                x: obj.position.x,
+                                y: obj.position.y,
+                                z: obj.position.z
+                            },
+                            rotation: {
+                                rpy: {
+                                    x: rot.x,
+                                    y: rot.y,
+                                    z: rot.z
+                                },
+                                quaternion: {
+                                    x: quat.x,
+                                    y: quat.y,
+                                    z: quat.z,
+                                    w: quat.w
+                                }
+                            }
+                        };
+                    });
                 
                 const assembly = {
                     timestamp: new Date().toISOString(),
-                    export_type: "assembly_with_relative_positions",
-                    coordinate_system: "Z-up",
-                    total_components: sceneObjects.length,
-                    components: sceneObjects.map(obj => ({
-                        name: obj.userData.name,
-                        displayName: obj.userData.displayName,
-                        type: obj.userData.type,
-                        id: obj.userData.id,
-                        position: {
-                            x: obj.position.x,
-                            y: obj.position.y,
-                            z: obj.position.z
-                        },
-                        rotation: {
-                            x: obj.rotation.x,
-                            y: obj.rotation.y,
-                            z: obj.rotation.z
-                        },
-                        parentId: obj.userData.parentId || null
-                    })),
-                    relative_positions: calculateRelativePositions(),
-                    distance_matrix: calculateDistanceMatrix()
+                    components: components
                 };
                 
                 const blob = new Blob([JSON.stringify(assembly, null, 2)], { type: 'application/json' });
@@ -1191,68 +1357,7 @@ async def read_root():
                 showMessage("Assembly exported successfully!", "success");
                 updateStatus("Assembly exported to downloads");
             }
-            
-            function calculateRelativePositions() {
-                const relativePositions = {};
-                
-                for (let i = 0; i < sceneObjects.length; i++) {
-                    const obj1 = sceneObjects[i];
-                    const obj1Name = obj1.userData.name;
-                    relativePositions[obj1Name] = {};
-                    
-                    for (let j = 0; j < sceneObjects.length; j++) {
-                        if (i !== j) {
-                            const obj2 = sceneObjects[j];
-                            const obj2Name = obj2.userData.name;
-                            
-                            // Calculate relative position (obj2 position relative to obj1 center)
-                            const relativePos = {
-                                x: obj2.position.x - obj1.position.x,
-                                y: obj2.position.y - obj1.position.y,
-                                z: obj2.position.z - obj1.position.z
-                            };
-                            
-                            relativePositions[obj1Name][obj2Name] = {
-                                relative_position: relativePos,
-                                distance: Math.sqrt(
-                                    relativePos.x * relativePos.x + 
-                                    relativePos.y * relativePos.y + 
-                                    relativePos.z * relativePos.z
-                                )
-                            };
-                        }
-                    }
-                }
-                
-                return relativePositions;
-            }
-            
-            function calculateDistanceMatrix() {
-                const distanceMatrix = {};
-                
-                for (let i = 0; i < sceneObjects.length; i++) {
-                    const obj1 = sceneObjects[i];
-                    const obj1Name = obj1.userData.name;
-                    distanceMatrix[obj1Name] = {};
-                    
-                    for (let j = 0; j < sceneObjects.length; j++) {
-                        const obj2 = sceneObjects[j];
-                        const obj2Name = obj2.userData.name;
-                        
-                        if (i === j) {
-                            distanceMatrix[obj1Name][obj2Name] = 0;
-                        } else {
-                            const dx = obj2.position.x - obj1.position.x;
-                            const dy = obj2.position.y - obj1.position.y;
-                            const dz = obj2.position.z - obj1.position.z;
-                            const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
-                            distanceMatrix[obj1Name][obj2Name] = distance;
-                        }
-                    }
-                }
-                
-                return distanceMatrix;
-            }
+            window.exportAssembly = exportAssembly;
             
             async function loadAssemblyFromFile(event) {
                 const file = event.target.files[0];
@@ -1279,12 +1384,11 @@ async def read_root():
                     }
                     
                     // Restore assembly components
+                    // Note: Simplified format only contains components (no markers)
                     let loadedCount = 0;
                     for (const componentData of assemblyData.components) {
-                        if (componentData.type === 'component') {
-                            await restoreComponentFromAssembly(componentData);
-                            loadedCount++;
-                        }
+                        await restoreComponentFromAssembly(componentData);
+                        loadedCount++;
                     }
                     
                     updateSceneObjectsList();
@@ -1342,21 +1446,27 @@ async def read_root():
                     type: 'component',
                     displayName: component.display_name,
                     originalColor: getComponentColor(componentName),
-                    id: componentData.id || generateId()
+                    id: generateId()
                 };
                 
-                // Restore position and rotation from assembly data
+                // Restore position from assembly data
                 wireframe.position.set(
                     componentData.position.x,
                     componentData.position.y,
                     componentData.position.z
                 );
                 
-                wireframe.rotation.set(
-                    componentData.rotation.x,
-                    componentData.rotation.y,
-                    componentData.rotation.z
-                );
+                // Restore rotation from assembly data
+                // STRICT: require new format rotation.rpy.{x,y,z}
+                if (!componentData.rotation || !componentData.rotation.rpy) {
+                    throw new Error(`Assembly component ${componentName} is missing rotation.rpy (expected format: rotation.rpy.{x,y,z})`);
+                }
+                
+                const rotX = componentData.rotation.rpy.x;
+                const rotY = componentData.rotation.rpy.y;
+                const rotZ = componentData.rotation.rpy.z;
+                
+                wireframe.rotation.set(rotX, rotY, rotZ);
                 
                 scene.add(wireframe);
                 sceneObjects.push(wireframe);
@@ -1373,11 +1483,13 @@ async def read_root():
                 document.getElementById('floatingControls').style.display = 'block';
                 document.getElementById('showControlsBtn').style.display = 'none';
             }
+            window.showFloatingControls = showFloatingControls;
             
             function hideFloatingControls() {
                 document.getElementById('floatingControls').style.display = 'none';
                 document.getElementById('showControlsBtn').style.display = 'block';
             }
+            window.hideFloatingControls = hideFloatingControls;
             
             function updateStatus(message) {
                 const statusBar = document.getElementById('statusBar');
@@ -1401,73 +1513,75 @@ async def read_root():
             }
             
             // Grasp Points Visualization Functions
-            async function loadGraspPoints(event) {
+            // Load grasp points for a specific target object, relative to its current pose.
+            // If clearFirst=true, previous grasp visualization is cleared before attaching new points.
+            async function loadGraspPointsFromData(tempData, targetObject, clearFirst = false) {
+                if (!targetObject || !targetObject.userData || targetObject.userData.type !== 'component') {
+                    throw new Error("No valid target object selected for grasp points (expected a component).");
+                }
+                
+                // Validate grasp points data
+                if (!tempData.markers || !Array.isArray(tempData.markers)) {
+                    throw new Error("Invalid grasp points data - missing markers array");
+                }
+                
+                if (!tempData.wireframe || !tempData.wireframe.vertices || !tempData.wireframe.edges) {
+                    throw new Error("Invalid grasp points data - missing wireframe data");
+                }
+                
+                if (!tempData.grasp_points || !Array.isArray(tempData.grasp_points)) {
+                    throw new Error("Invalid grasp points data - missing grasp_points array");
+                }
+                
+                // Optionally clear previous grasp points (only for first object in a batch)
+                if (clearFirst) {
+                    clearGraspPoints();
+                }
+                
+                // Now set the validated data (last loaded data wins)
+                graspPointsData = tempData;
+                                
+                // Add grasp points as children of the target object (relative to its pose)
+                // Grasp points are stored once relative to CAD center (object local frame)
+                let totalPoints = 0;
+                graspPointsData.grasp_points.forEach((graspPoint, idx) => {
+                    const sphere = createGraspPointSphere(graspPoint, idx);
+                    // Parent sphere to the target object so it follows its pose
+                    targetObject.add(sphere);
+                    // Track in sceneObjects for selection/listing purposes
+                    sceneObjects.push(sphere);
+                    totalPoints++;
+                });
+                
+                // Update info
+                const objName = targetObject.userData.displayName || targetObject.userData.name;
+                const infoText = `Loaded ${objName}: ${totalPoints} grasp points`;
+                document.getElementById('graspInfo').innerHTML = `
+                    <span style="color: #27ae60; font-weight: 500;">${infoText}</span>
+                `;
+                
+                showMessage(infoText, "success");
+                updateStatus(`Grasp visualization loaded for ${objName}`);
+            }
+            
+            async function loadGraspPointsFromFile(event) {
                 const file = event.target.files[0];
                 if (!file) return;
                 
                 try {
-                    updateStatus("Loading grasp points...");
+                    if (!selectedObject || !selectedObject.userData || selectedObject.userData.type !== 'component') {
+                        showMessage("Please select a component in the scene before loading grasp points from file.", "info");
+                        return;
+                    }
+                    
+                    updateStatus("Loading grasp points from file...");
                     showMessage("Reading grasp points file...", "info");
                     
                     const text = await file.text();
                     const tempData = JSON.parse(text);
                     
-                    // Validate grasp points data
-                    if (!tempData.markers || !Array.isArray(tempData.markers)) {
-                        throw new Error("Invalid grasp points file - missing markers array");
-                    }
-                    
-                    if (!tempData.wireframe || !tempData.wireframe.vertices || !tempData.wireframe.edges) {
-                        throw new Error("Invalid grasp points file - missing wireframe data");
-                    }
-                    
-                    if (!tempData.grasp_points || !Array.isArray(tempData.grasp_points)) {
-                        throw new Error("Invalid grasp points file - missing grasp_points array");
-                    }
-                    
-                    // Clear previous grasp points
-                    clearGraspPoints();
-                    
-                    // Now set the validated data
-                    graspPointsData = tempData;
-                    
-                    // Create group for everything (wireframe, markers, grasp points)
-                    graspPointsGroup = new THREE.Group();
-                    graspPointsGroup.name = "GraspVisualization";
-                    
-                    // 1. Create wireframe
-                    const wireframe = createWireframeFromData(graspPointsData);
-                    graspPointsGroup.add(wireframe);
-                    
-                    // 2. Add ArUco markers
-                    graspPointsData.markers.forEach(markerData => {
-                        const markerMesh = createMarkerMesh(markerData);
-                        graspPointsGroup.add(markerMesh);
-                    });
-                    
-                    // 3. Add grasp points (stored relative to CAD center)
-                    // Grasp points are now stored once relative to CAD center, not per-marker
-                    let totalPoints = 0;
-                    graspPointsData.grasp_points.forEach((graspPoint, idx) => {
-                        const sphere = createGraspPointSphere(graspPoint, idx);
-                        graspPointsGroup.add(sphere);
-                        totalPoints++;
-                    });
-                    
-                    scene.add(graspPointsGroup);
-                    
-                    // Update info
-                    const infoText = `Loaded ${graspPointsData.display_name}: ${totalPoints} grasp points, ${graspPointsData.markers.length} markers`;
-                    document.getElementById('graspInfo').innerHTML = `
-                        <span style="color: #27ae60; font-weight: 500;">${infoText}</span>
-                    `;
-                    
-                    showMessage(infoText, "success");
-                    updateStatus(`Grasp visualization loaded`);
-                    
-                    // Auto-select the wireframe
-                    selectObject(wireframe);
-                    
+                    // For manual file load, clear previous visualization first
+                    await loadGraspPointsFromData(tempData, selectedObject, /* clearFirst */ true);
                 } catch (error) {
                     showMessage(`Error loading grasp points: ${error.message}`, "error");
                     updateStatus("Error loading grasp points");
@@ -1476,6 +1590,61 @@ async def read_root():
                 
                 // Reset file input
                 event.target.value = '';
+            }
+            
+            async function loadGraspPointsAuto() {
+                try {
+                    // Collect all component objects currently in the scene
+                    const componentObjects = sceneObjects.filter(obj =>
+                        obj.userData && obj.userData.type === 'component'
+                    );
+                    
+                    if (componentObjects.length === 0) {
+                        showMessage("No components in scene - load an assembly or add components first.", "info");
+                        updateStatus("No components in scene - cannot load grasp points.");
+                        return;
+                    }
+                    
+                    updateStatus("Loading grasp points for all scene components from data directory...");
+                    showMessage("Loading grasp points for all scene components from server...", "info");
+                    
+                    // Clear previous grasp visualization once at the start
+                    clearGraspPoints();
+                    
+                    let anyLoaded = false;
+                    
+                    // Try to auto-load grasp points for each component, attaching them relative to each object's pose
+                    for (const obj of componentObjects) {
+                        const objectName = obj.userData.name;
+                        try {
+                            const response = await fetch(`/api/grasp-points/${objectName}`);
+                            
+                            if (!response.ok) {
+                                const errorText = await response.text();
+                                console.warn(`Grasp data not found for ${objectName}: ${errorText}`);
+                                continue;
+                            }
+                            
+                            const data = await response.json();
+                            // Do not clear inside helper; we've already cleared once above
+                            await loadGraspPointsFromData(data, obj, /* clearFirst */ false);
+                            anyLoaded = true;
+                        } catch (innerError) {
+                            console.warn(`Grasp points auto-load error for ${objectName}:`, innerError);
+                        }
+                    }
+                    
+                    if (!anyLoaded) {
+                        showMessage("No grasp data found in data/grasp for any scene components.", "info");
+                        updateStatus("No grasp points loaded.");
+                    } else {
+                        updateStatus("Grasp points auto-loaded for available components.");
+                    }
+                } catch (error) {
+                    console.error("Grasp points auto-load error:", error);
+                    showMessage(`Error auto-loading grasp points: ${error.message}`, "error");
+                    updateStatus("Error auto-loading grasp points.");
+                }
             }
             
             function createWireframeFromData(data) {
@@ -1506,10 +1675,9 @@ async def read_root():
                     id: generateId()
                 };
                 
-                // Center the wireframe
-                wireframe.position.set(0, 0, 0);
-                sceneObjects.push(wireframe);
-                
+                // NOTE: This function is kept for compatibility but is no longer used
+                // for grasp visualization in the assembly app. Grasp points are now
+                // attached directly to the selected component mesh.
                 return wireframe;
             }
             
@@ -1572,41 +1740,32 @@ async def read_root():
                     id: generateId()
                 };
                 
-                // Add approach vector visualization (small arrow)
-                if (graspPoint.approach_vector) {
-                    const direction = new THREE.Vector3(
-                        graspPoint.approach_vector.x,
-                        graspPoint.approach_vector.y,
-                        graspPoint.approach_vector.z
-                    ).normalize();
-                    
-                    const arrowHelper = new THREE.ArrowHelper(
-                        direction,
-                        new THREE.Vector3(0, 0, 0),  // Origin relative to sphere
-                        0.01,  // Arrow length in meters (1cm)
-                        0xffff00,  // Yellow arrow color for better visibility
-                        0.003,  // Head length
-                        0.002   // Head width
-                    );
-                    sphere.add(arrowHelper);
-                }
-                
                 return sphere;
             }
             
             function clearGraspPoints() {
-                if (graspPointsGroup) {
-                    // Remove all objects from the grasp group from sceneObjects
-                    graspPointsGroup.traverse((child) => {
-                        const index = sceneObjects.indexOf(child);
-                        if (index > -1) {
-                            sceneObjects.splice(index, 1);
-                        }
-                    });
-                    
-                    scene.remove(graspPointsGroup);
-                    graspPointsGroup = null;
-                }
+                // Remove all grasp-related objects (wireframes, markers, points) from scene and tracking
+                const toRemove = sceneObjects.filter(obj =>
+                    obj.userData &&
+                    (
+                        obj.userData.type === 'grasp_wireframe' ||
+                        obj.userData.type === 'grasp_marker' ||
+                        obj.userData.type === 'grasp_point'
+                    )
+                );
+                
+                toRemove.forEach(obj => {
+                    if (obj.parent) {
+                        obj.parent.remove(obj);
+                    }
+                    const index = sceneObjects.indexOf(obj);
+                    if (index > -1) {
+                        sceneObjects.splice(index, 1);
+                    }
+                });
+                
+                // Logical group is no longer used as a visual parent
+                graspPointsGroup = null;
                 graspPointsData = null;
                 
                 // Deselect if a grasp object was selected
@@ -1623,6 +1782,8 @@ async def read_root():
                 updateStatus("Grasp points cleared");
                 showMessage("Grasp points visualization cleared", "info");
             }
+            window.clearGraspPoints = clearGraspPoints;
+            window.loadAllComponents = loadAllComponents;
             
             // Initialize when page loads
             window.addEventListener('load', initScene);
@@ -1631,12 +1792,68 @@ async def read_root():
     </html>
     """
 
+def transform_aruco_data(aruco_raw: dict) -> dict:
+    """Transform ArUco data from new format (T_object_to_marker) to frontend format (pose_absolute)."""
+    if not aruco_raw:
+        return None
+    
+    # Transform ArUco data to match frontend expectations
+    # New format has T_object_to_marker, need to convert to pose_absolute
+    if 'markers' not in aruco_raw or not isinstance(aruco_raw['markers'], list):
+        raise ValueError(f"ArUco data must have a 'markers' array. Got keys: {list(aruco_raw.keys())}")
+    
+    if len(aruco_raw['markers']) == 0:
+        raise ValueError("ArUco data has empty 'markers' array")
+    
+    transformed_markers = []
+    default_size = aruco_raw.get('size', 0.021)  # Get size from top level
+    
+    for idx, marker in enumerate(aruco_raw['markers']):
+        if not isinstance(marker, dict):
+            raise ValueError(f"Marker at index {idx} is not a dictionary: {type(marker)}")
+        
+        if 'T_object_to_marker' not in marker:
+            raise ValueError(f"Marker {marker.get('aruco_id', f'at index {idx}')} missing 'T_object_to_marker'. Marker keys: {list(marker.keys())}")
+        
+        if not isinstance(marker['T_object_to_marker'], dict):
+            raise ValueError(f"Marker {marker.get('aruco_id', f'at index {idx}')} has invalid 'T_object_to_marker' type: {type(marker['T_object_to_marker'])}")
+        
+        # Transform T_object_to_marker to pose_absolute
+        transformed_marker = {
+            'aruco_id': marker.get('aruco_id'),
+            'size': marker.get('size', default_size),  # Use marker size or default
+            'face_type': marker.get('face_type'),
+            'surface_normal': marker.get('surface_normal'),
+        }
+        
+        # Convert T_object_to_marker to pose_absolute
+        t_obj_to_marker = marker['T_object_to_marker']
+        if 'position' not in t_obj_to_marker or 'rotation' not in t_obj_to_marker:
+            raise ValueError(f"Marker {marker.get('aruco_id', f'at index {idx}')} T_object_to_marker missing 'position' or 'rotation'. Keys: {list(t_obj_to_marker.keys())}")
+        
+        transformed_marker['pose_absolute'] = {
+            'position': t_obj_to_marker.get('position', {'x': 0, 'y': 0, 'z': 0}),
+            'rotation': t_obj_to_marker.get('rotation', {'roll': 0, 'pitch': 0, 'yaw': 0})
+        }
+        
+        transformed_markers.append(transformed_marker)
+    
+    return {
+        'markers': transformed_markers,
+        'aruco_dictionary': aruco_raw.get('aruco_dictionary', 'DICT_4X4_50'),
+        'size': default_size,
+        'border_width': aruco_raw.get('border_width', 0.05)
+    }
+
 @app.get("/api/components")
 async def get_components():
     """Get all available components with their wireframe and ArUco data."""
     components = {}
     
-    for component_name in COMPONENTS:
+    # Dynamically discover components from wireframe directory
+    available_components = get_available_components()
+    
+    for component_name in available_components:
         try:
             # Load wireframe data
             wireframe_path = DATA_DIR / "wireframe" / f"{component_name}_wireframe.json"
@@ -1646,11 +1863,19 @@ async def get_components():
                 with open(wireframe_path, 'r') as f:
                     wireframe_data = json.load(f)
                 
-                # Load ArUco data if available
+                # Load ArUco data if available and transform to expected format
                 aruco_data = None
                 if aruco_path.exists():
-                    with open(aruco_path, 'r') as f:
-                        aruco_data = json.load(f)
+                    try:
+                        with open(aruco_path, 'r') as f:
+                            aruco_raw = json.load(f)
+                        aruco_data = transform_aruco_data(aruco_raw)
+                    except Exception as e:
+                        print(f"Error transforming ArUco data for {component_name}: {e}")
+                        import traceback
+                        traceback.print_exc()
+                        # Continue without ArUco data if transformation fails
+                        aruco_data = None
                 
                 components[component_name] = {
                     "wireframe": wireframe_data,
@@ -1670,7 +1895,8 @@ async def get_components():
 @app.get("/api/components/{component_name}")
 async def get_component(component_name: str):
     """Get a specific component's data."""
-    if component_name not in COMPONENTS:
+    available_components = get_available_components()
+    if component_name not in available_components:
         raise HTTPException(status_code=404, detail="Component not found")
     
     try:
@@ -1686,7 +1912,8 @@ async def get_component(component_name: str):
         aruco_data = None
         if aruco_path.exists():
             with open(aruco_path, 'r') as f:
-                aruco_data = json.load(f)
+                aruco_raw = json.load(f)
+            aruco_data = transform_aruco_data(aruco_raw)
         
         return {
             "wireframe": wireframe_data,
@@ -1697,6 +1924,21 @@ async def get_component(component_name: str):
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/grasp-points/{object_name}")
+async def get_grasp_points(object_name: str):
+    """Get grasp points data for an object from the data/grasp directory."""
+    grasp_file = DATA_DIR / "grasp" / f"{object_name}_grasp_points_all_markers.json"
+    
+    if not grasp_file.exists():
+        raise HTTPException(status_code=404, detail=f"Grasp data not found for {object_name}")
+    
+    try:
+        with open(grasp_file, 'r') as f:
+            return json.load(f)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error loading grasp data: {str(e)}")
 
 @app.post("/api/assembly")
 async def save_assembly(assembly_data: dict):

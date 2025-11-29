@@ -43,6 +43,7 @@ dev = [
 
 [project.scripts]
 aruco-annotator = "aruco_annotator.main:main"
+cad-assembly = "assembly_app.main:main"
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
