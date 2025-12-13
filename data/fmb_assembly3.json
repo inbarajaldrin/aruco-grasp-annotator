@@ -2,7 +2,7 @@
   "timestamp": "2025-11-29T04:14:35.430Z",
   "components": [
     {
-      "name": "base_scaled70",
+      "name": "base3",
       "position": {
         "x": 0.0,
         "y": 0.0,
@@ -23,7 +23,7 @@
       }
     },
     {
-      "name": "fork_orange_scaled70",
+      "name": "fork_orange",
       "position": {
         "x": 0.0,
         "y": 0.036,
@@ -44,7 +44,7 @@
       }
     },
     {
-      "name": "fork_yellow_scaled70",
+      "name": "fork_yellow",
       "position": {
         "x": 0.0,
         "y": -0.036,
@@ -65,7 +65,7 @@
       }
     },
     {
-      "name": "line_brown_scaled70",
+      "name": "line_brown",
       "position": {
         "x": 0.026,
         "y": 0.0,
@@ -86,7 +86,7 @@
       }
     },
     {
-      "name": "line_red_scaled70",
+      "name": "line_red",
       "position": {
         "x": -0.026,
         "y": 0.0,

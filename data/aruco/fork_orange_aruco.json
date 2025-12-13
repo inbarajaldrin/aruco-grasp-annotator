@@ -1,6 +1,6 @@
 {
-  "exported_at": "2025-11-28T04:39:05.213523",
-  "model_file": "line_red_scaled70.obj",
+  "exported_at": "2025-11-28T04:44:39.720682",
+  "model_file": "fork_orange.obj",
   "total_markers": 6,
   "aruco_dictionary": "DICT_4X4_50",
   "size": 0.021,
@@ -12,9 +12,9 @@
       0.0
     ],
     "dimensions": {
-      "length": 0.025899999141693116,
-      "width": 0.14,
-      "height": 0.025899999141693116
+      "length": 0.10920000076293945,
+      "width": 0.07000000000000006,
+      "height": 0.020999999046325685
     },
     "position": [
       0.0,
@@ -35,7 +35,7 @@
   },
   "markers": [
     {
-      "aruco_id": 12,
+      "aruco_id": 0,
       "face_type": "left",
       "surface_normal": [
         -0.9999999900000002,
@@ -44,7 +44,7 @@
       ],
       "T_object_to_marker": {
         "position": {
-          "x": -0.012949999570846558,
+          "x": -0.05460000038146973,
           "y": 0.0,
           "z": 0.0
         },
@@ -62,7 +62,7 @@
       }
     },
     {
-      "aruco_id": 13,
+      "aruco_id": 1,
       "face_type": "right",
       "surface_normal": [
         0.9999999900000002,
@@ -71,25 +71,25 @@
       ],
       "T_object_to_marker": {
         "position": {
-          "x": 0.012949999570846558,
+          "x": 0.05460000038146973,
           "y": 0.0,
           "z": 0.0
         },
         "rotation": {
           "roll": 0.0,
           "pitch": 1.5707963267948966,
-          "yaw": 3.141592653589793,
+          "yaw": 0.0,
           "quaternion": {
-            "x": 0.7071067756329439,
-            "y": 4.329780247171452e-17,
-            "z": 0.7071067867401513,
-            "w": 4.3297803151834814e-17
+            "x": 0.0,
+            "y": 0.7071067756329438,
+            "z": 0.0,
+            "w": 0.7071067867401511
           }
         }
       }
     },
     {
-      "aruco_id": 14,
+      "aruco_id": 2,
       "face_type": "back",
       "surface_normal": [
         0.0,
@@ -99,7 +99,7 @@
       "T_object_to_marker": {
         "position": {
           "x": 0.0,
-          "y": -0.07,
+          "y": -0.03500000000000003,
           "z": 0.0
         },
         "rotation": {
@@ -116,7 +116,7 @@
       }
     },
     {
-      "aruco_id": 15,
+      "aruco_id": 3,
       "face_type": "front",
       "surface_normal": [
         0.0,
@@ -126,7 +126,7 @@
       "T_object_to_marker": {
         "position": {
           "x": 0.0,
-          "y": 0.07,
+          "y": 0.03500000000000003,
           "z": 0.0
         },
         "rotation": {
@@ -143,7 +143,7 @@
       }
     },
     {
-      "aruco_id": 16,
+      "aruco_id": 4,
       "face_type": "bottom",
       "surface_normal": [
         0.0,
@@ -154,7 +154,7 @@
         "position": {
           "x": 0.0,
           "y": 0.0,
-          "z": -0.012949999570846558
+          "z": -0.010499999523162842
         },
         "rotation": {
           "roll": 3.141592653589793,
@@ -170,7 +170,7 @@
       }
     },
     {
-      "aruco_id": 17,
+      "aruco_id": 5,
       "face_type": "top",
       "surface_normal": [
         0.0,
@@ -181,7 +181,7 @@
         "position": {
           "x": 0.0,
           "y": 0.0,
-          "z": 0.012949999570846558
+          "z": 0.010499999523162842
         },
         "rotation": {
           "roll": 0.0,

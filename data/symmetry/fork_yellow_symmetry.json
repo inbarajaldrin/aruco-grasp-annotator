@@ -1,7 +1,21 @@
 {
-    "object_name": "line_brown_scaled70",
+    "object_name": "fork_yellow",
     "fold_axes": {
         "x": {
+            "fold": 1,
+            "quaternions": [
+                {
+                    "angle_deg": 0,
+                    "quaternion": {
+                        "x": 0,
+                        "y": 0,
+                        "z": 0,
+                        "w": 1
+                    }
+                }
+            ]
+        },
+        "y": {
             "fold": 2,
             "quaternions": [
                 {
@@ -11,38 +25,6 @@
                         "y": 0,
                         "z": 0,
                         "w": 1
-                    }
-                },
-                {
-                    "angle_deg": 180,
-                    "quaternion": {
-                        "x": 1,
-                        "y": 0,
-                        "z": 0,
-                        "w": 0
-                    }
-                }
-            ]
-        },
-        "y": {
-            "fold": 4,
-            "quaternions": [
-                {
-                    "angle_deg": 0,
-                    "quaternion": {
-                        "x": 0,
-                        "y": 0,
-                        "z": 0,
-                        "w": 1
-                    }
-                },
-                {
-                    "angle_deg": 90,
-                    "quaternion": {
-                        "x": 0,
-                        "y": 0.707107,
-                        "z": 0,
-                        "w": 0.707107
                     }
                 },
                 {
@@ -53,20 +35,11 @@
                         "z": 0,
                         "w": 0
                     }
-                },
-                {
-                    "angle_deg": 270,
-                    "quaternion": {
-                        "x": 0,
-                        "y": 0.707107,
-                        "z": 0,
-                        "w": -0.707107
-                    }
                 }
             ]
         },
         "z": {
-            "fold": 2,
+            "fold": 1,
             "quaternions": [
                 {
                     "angle_deg": 0,
@@ -75,15 +48,6 @@
                         "y": 0,
                         "z": 0,
                         "w": 1
-                    }
-                },
-                {
-                    "angle_deg": 180,
-                    "quaternion": {
-                        "x": 0,
-                        "y": 0,
-                        "z": 1,
-                        "w": 0
                     }
                 }
             ]
