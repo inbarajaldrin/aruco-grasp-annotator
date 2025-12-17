@@ -28,7 +28,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 2. **Clone the repository**:
 ```bash
-git clone https://github.com/YOUR_USERNAME/aruco-grasp-annotator.git
+git clone https://github.com/inbarajaldrin/aruco-grasp-annotator.git
 cd aruco-grasp-annotator
 ```
 
@@ -48,6 +48,19 @@ uv run aruco-annotator          # Annotate ArUco markers and grasps
 uv run assembly-app             # Plan assemblies in the browser
 uv run grasp-points-annotator   # Create grasp point annotations
 uv run symmetry-exporter        # Visualize/export symmetry data
+```
+
+### ArUco Localizer
+
+Real-time object pose estimation using ArUco markers:
+
+```bash
+# Object pose estimator (camera)
+python src/aruco_localizer/object_pose_estimator_camera.py --model <model_name>
+
+# Object pose estimator (ROS2)
+python src/aruco_localizer/object_pose_estimator_ros2.py --model <model_name> --camera-topic /camera/image_raw
+
 ```
 
 ## Project Structure
