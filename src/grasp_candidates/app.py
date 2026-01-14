@@ -340,30 +340,36 @@ async def read_root():
                 scene = new THREE.Scene();
                 scene.background = new THREE.Color(0x1a1a1a);
                 
-                // Camera
-                camera = new THREE.PerspectiveCamera(
-                    75,
-                    window.innerWidth / window.innerHeight,
-                    0.001,
-                    1000
+                // Camera - Orthographic for consistent dimensions when zooming
+                const container = document.getElementById('viewer-container');
+                const frustumSize = 0.5;
+                const aspect = container.clientWidth / container.clientHeight;
+                camera = new THREE.OrthographicCamera(
+                    frustumSize * aspect / -2,  // left
+                    frustumSize * aspect / 2,   // right
+                    frustumSize / 2,            // top
+                    frustumSize / -2,           // bottom
+                    0.001,                      // near
+                    1000                        // far
                 );
                 camera.position.set(0.5, -0.5, 0.5);  // Move camera to look at scene from Y-negative
                 camera.up.set(0, 0, 1);  // Set Z as up vector
                 camera.lookAt(0, 0, 0);
-                
+                camera.zoom = 1;
+                camera.updateProjectionMatrix();
+
                 // Renderer
-                const container = document.getElementById('viewer-container');
                 renderer = new THREE.WebGLRenderer({ antialias: true });
                 renderer.setSize(container.clientWidth, container.clientHeight);
                 renderer.setPixelRatio(window.devicePixelRatio);
                 container.appendChild(renderer.domElement);
-                
+
                 // Controls
                 controls = new THREE.OrbitControls(camera, renderer.domElement);
                 controls.enableDamping = true;
                 controls.dampingFactor = 0.05;
-                controls.minDistance = 0.05;
-                controls.maxDistance = 5;
+                controls.minZoom = 0.1;
+                controls.maxZoom = 50;
                 
                 // Lighting
                 const ambientLight = new THREE.AmbientLight(0x404040, 0.4);
@@ -416,7 +422,12 @@ async def read_root():
             
             function onWindowResize() {
                 const container = document.getElementById('viewer-container');
-                camera.aspect = container.clientWidth / container.clientHeight;
+                const frustumSize = 0.5;
+                const aspect = container.clientWidth / container.clientHeight;
+                camera.left = frustumSize * aspect / -2;
+                camera.right = frustumSize * aspect / 2;
+                camera.top = frustumSize / 2;
+                camera.bottom = frustumSize / -2;
                 camera.updateProjectionMatrix();
                 renderer.setSize(container.clientWidth, container.clientHeight);
             }

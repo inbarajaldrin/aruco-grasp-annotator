@@ -672,24 +672,35 @@ async def read_root():
                 scene = new THREE.Scene();
                 scene.background = new THREE.Color(0x1a1a1a);
                 
-                // Camera setup
-                camera = new THREE.PerspectiveCamera(75, container.clientWidth / container.clientHeight, 0.001, 1000);
-                camera.position.set(0.3, -0.3, 0.3);  // Move camera closer to scene
+                // Camera setup - Orthographic for consistent dimensions when zooming
+                const frustumSize = 0.5;  // Controls how much of the scene is visible
+                const aspect = container.clientWidth / container.clientHeight;
+                camera = new THREE.OrthographicCamera(
+                    frustumSize * aspect / -2,  // left
+                    frustumSize * aspect / 2,   // right
+                    frustumSize / 2,            // top
+                    frustumSize / -2,           // bottom
+                    0.001,                      // near
+                    1000                        // far
+                );
+                camera.position.set(0.5, -0.5, 0.5);  // Standard view position
                 camera.up.set(0, 0, 1);  // Set Z as up vector
                 camera.lookAt(0, 0, 0);
-                
+                camera.zoom = 1;
+                camera.updateProjectionMatrix();
+
                 // Renderer setup
                 renderer = new THREE.WebGLRenderer({ antialias: true });
                 renderer.setSize(container.clientWidth, container.clientHeight);
                 renderer.shadowMap.enabled = true;
                 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
                 container.appendChild(renderer.domElement);
-                
+
                 // Orbit Controls
                 controls = new THREE.OrbitControls(camera, renderer.domElement);
                 controls.enableDamping = false;  // Disable damping for immediate stop
-                controls.minDistance = 0.05;
-                controls.maxDistance = 5;
+                controls.minZoom = 0.1;   // Minimum zoom level (zoomed out)
+                controls.maxZoom = 50;    // Maximum zoom level (zoomed in)
                 
                 // Lighting
                 const ambientLight = new THREE.AmbientLight(0x404040, 0.4);
@@ -808,7 +819,12 @@ async def read_root():
             
             function onWindowResize() {
                 const container = document.getElementById('viewer');
-                camera.aspect = container.clientWidth / container.clientHeight;
+                const frustumSize = 0.5;
+                const aspect = container.clientWidth / container.clientHeight;
+                camera.left = frustumSize * aspect / -2;
+                camera.right = frustumSize * aspect / 2;
+                camera.top = frustumSize / 2;
+                camera.bottom = frustumSize / -2;
                 camera.updateProjectionMatrix();
                 renderer.setSize(container.clientWidth, container.clientHeight);
             }
@@ -1413,9 +1429,11 @@ async def read_root():
             window.toggleGrid = toggleGrid;
             
             function resetCamera() {
-                camera.position.set(0.3, -0.3, 0.3);  // Closer to scene
+                camera.position.set(0.5, -0.5, 0.5);  // Standard view position
                 camera.up.set(0, 0, 1);  // Ensure Z is still up
                 camera.lookAt(0, 0, 0);
+                camera.zoom = 1;  // Reset zoom level for orthographic camera
+                camera.updateProjectionMatrix();
                 controls.reset();
                 updateStatus("Camera reset to default position");
             }
@@ -1539,9 +1557,17 @@ async def read_root():
                 exportRenderer.shadowMap.enabled = true;
                 exportRenderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
-                // Adjust camera aspect ratio for export resolution
-                const originalAspect = camera.aspect;
-                camera.aspect = 1920 / 1080;
+                // Adjust camera frustum for export resolution (orthographic camera)
+                const originalLeft = camera.left;
+                const originalRight = camera.right;
+                const originalTop = camera.top;
+                const originalBottom = camera.bottom;
+                const frustumSize = 0.5;
+                const exportAspect = 1920 / 1080;
+                camera.left = frustumSize * exportAspect / -2;
+                camera.right = frustumSize * exportAspect / 2;
+                camera.top = frustumSize / 2;
+                camera.bottom = frustumSize / -2;
                 camera.updateProjectionMatrix();
 
                 // Render scene
@@ -1556,8 +1582,11 @@ async def read_root():
                 link.click();
                 document.body.removeChild(link);
 
-                // Restore camera aspect ratio
-                camera.aspect = originalAspect;
+                // Restore camera frustum
+                camera.left = originalLeft;
+                camera.right = originalRight;
+                camera.top = originalTop;
+                camera.bottom = originalBottom;
                 camera.updateProjectionMatrix();
 
                 // Restore scene background

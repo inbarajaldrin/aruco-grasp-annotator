@@ -959,18 +959,32 @@ def get_html_interface():
             scene = new THREE.Scene();
             scene.background = new THREE.Color(0x1a1a1a);
             
-            camera = new THREE.PerspectiveCamera(75, width / height, 0.01, 1000);
+            // Camera setup - Orthographic for consistent dimensions when zooming
+            const frustumSize = 0.5;
+            const aspect = width / height;
+            camera = new THREE.OrthographicCamera(
+                frustumSize * aspect / -2,  // left
+                frustumSize * aspect / 2,   // right
+                frustumSize / 2,            // top
+                frustumSize / -2,           // bottom
+                0.001,                      // near
+                1000                        // far
+            );
             camera.position.set(0.5, -0.5, 0.5);  // Position camera to look at scene
             camera.up.set(0, 0, 1);  // Set Z as up vector
             camera.lookAt(0, 0, 0);
-            
+            camera.zoom = 1;
+            camera.updateProjectionMatrix();
+
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(width, height);
             container.appendChild(renderer.domElement);
-            
+
             controls = new THREE.OrbitControls(camera, renderer.domElement);
             controls.enableDamping = true;
             controls.dampingFactor = 0.05;
+            controls.minZoom = 0.1;
+            controls.maxZoom = 50;
             
             // Lighting
             const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
@@ -1235,8 +1249,9 @@ def get_html_interface():
             const size = box.getSize(new THREE.Vector3());
             const maxDim = Math.max(size.x, size.y, size.z);
             const distance = maxDim * 2;
-            
-            camera.position.set(center.x + distance, center.y + distance, center.z + distance);
+
+            // Use negative Y to match assembly_app convention (view from +X, -Y, +Z)
+            camera.position.set(center.x + distance, center.y - distance, center.z + distance);
             camera.lookAt(center);
             controls.target.copy(center);
             controls.update();
@@ -2672,9 +2687,17 @@ def get_html_interface():
             exportRenderer.setSize(1920, 1080);
             exportRenderer.setClearColor(0x000000, 0);
 
-            // Adjust camera aspect ratio for export resolution
-            const originalAspect = camera.aspect;
-            camera.aspect = 1920 / 1080;
+            // Adjust camera frustum for export resolution (orthographic camera)
+            const originalLeft = camera.left;
+            const originalRight = camera.right;
+            const originalTop = camera.top;
+            const originalBottom = camera.bottom;
+            const frustumSize = 0.5;
+            const exportAspect = 1920 / 1080;
+            camera.left = frustumSize * exportAspect / -2;
+            camera.right = frustumSize * exportAspect / 2;
+            camera.top = frustumSize / 2;
+            camera.bottom = frustumSize / -2;
             camera.updateProjectionMatrix();
 
             // Render scene
@@ -2685,15 +2708,18 @@ def get_html_interface():
             const link = document.createElement('a');
             link.href = dataURL;
             const filename = session_state.current_file ?
-                session_state.current_file.replace(/\.[^/.]+$/, '') + '_scene.png' :
+                session_state.current_file.replace(/\\.[^/.]+$/, '') + '_scene.png' :
                 'scene.png';
             link.download = filename;
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
 
-            // Restore camera aspect ratio
-            camera.aspect = originalAspect;
+            // Restore camera frustum
+            camera.left = originalLeft;
+            camera.right = originalRight;
+            camera.top = originalTop;
+            camera.bottom = originalBottom;
             camera.updateProjectionMatrix();
 
             // Restore scene background
@@ -2957,7 +2983,12 @@ def get_html_interface():
         // Initialize on load
         window.addEventListener('resize', () => {
             const container = document.getElementById('viewer');
-            camera.aspect = container.clientWidth / container.clientHeight;
+            const frustumSize = 0.5;
+            const aspect = container.clientWidth / container.clientHeight;
+            camera.left = frustumSize * aspect / -2;
+            camera.right = frustumSize * aspect / 2;
+            camera.top = frustumSize / 2;
+            camera.bottom = frustumSize / -2;
             camera.updateProjectionMatrix();
             renderer.setSize(container.clientWidth, container.clientHeight);
         });
