@@ -4,8 +4,8 @@ Enhanced Interactive 3D Assembly Web Application v2.0
 Complete implementation with precision controls for component assembly
 """
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import json
@@ -15,6 +15,25 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 import uvicorn
 import numpy as np
+import cv2
+
+# ArUco marker generation
+ARUCO_DICTS = {
+    "DICT_4X4_50": cv2.aruco.DICT_4X4_50,
+    "DICT_4X4_100": cv2.aruco.DICT_4X4_100,
+    "DICT_5X5_50": cv2.aruco.DICT_5X5_50,
+    "DICT_5X5_100": cv2.aruco.DICT_5X5_100,
+    "DICT_6X6_50": cv2.aruco.DICT_6X6_50,
+    "DICT_6X6_100": cv2.aruco.DICT_6X6_100,
+}
+
+def generate_aruco_marker(dictionary: str, marker_id: int, size_pixels: int = 512) -> np.ndarray:
+    """Generate an ArUco marker image."""
+    if dictionary not in ARUCO_DICTS:
+        raise ValueError(f"Unknown dictionary: {dictionary}")
+    aruco_dict = cv2.aruco.getPredefinedDictionary(ARUCO_DICTS[dictionary])
+    marker_image = cv2.aruco.generateImageMarker(aruco_dict, marker_id, size_pixels)
+    return marker_image
 
 app = FastAPI(
     title="Enhanced 3D Assembly App v2.0",
@@ -82,7 +101,7 @@ async def read_root():
             }
             
             .sidebar {
-                width: 500px;
+                width: 350px;
                 background: rgba(255, 255, 255, 0.95);
                 backdrop-filter: blur(10px);
                 padding: 20px;
@@ -128,9 +147,6 @@ async def read_root():
                 font-size: 16px;
                 border-bottom: 2px solid #3498db;
                 padding-bottom: 5px;
-                display: flex;
-                align-items: center;
-                gap: 8px;
             }
             
             .component-list {
@@ -189,7 +205,7 @@ async def read_root():
                 font-weight: 500;
                 transition: all 0.2s;
                 margin: 3px;
-                min-width: 100px;
+                width: 100%;
             }
             
             .btn:hover {
@@ -210,9 +226,9 @@ async def read_root():
             }
             
             .btn-small {
-                padding: 6px 12px;
-                font-size: 12px;
-                min-width: 60px;
+                padding: 4px 8px;
+                font-size: 11px;
+                width: auto;
             }
             
             .assembly-controls {
@@ -278,17 +294,41 @@ async def read_root():
             }
             
             .input-group {
+                margin: 10px 0;
+            }
+
+            .input-group label {
+                display: block;
+                margin-bottom: 5px;
+                font-weight: 500;
+                color: #34495e;
+            }
+
+            .input-group input, .input-group select {
+                width: 100%;
+                padding: 8px;
+                border: 1px solid #ddd;
+                border-radius: 4px;
+                font-size: 14px;
+            }
+
+            .transform-row {
                 display: flex;
                 align-items: center;
-                gap: 8px;
-                margin-bottom: 8px;
+                gap: 6px;
+                margin-bottom: 6px;
             }
-            
-            .input-group label {
-                min-width: 60px;
-                font-size: 13px;
+
+            .transform-row label {
+                min-width: 50px;
+                font-size: 12px;
                 color: #555;
                 font-weight: 500;
+            }
+
+            .transform-row .control-input {
+                width: 80px;
+                flex: none;
             }
             
             .control-buttons {
@@ -604,6 +644,9 @@ async def read_root():
                 <button class="btn btn-small" onclick="resetCamera()">Reset Camera</button>
                 <button class="btn btn-small" onclick="exportAssembly()">Export Assembly</button>
                 <button class="btn btn-small" onclick="document.getElementById('assemblyFileInput').click()">Load Assembly</button>
+                <button class="btn btn-small" onclick="exportPNG()">Export PNG</button>
+                <button class="btn btn-small" onclick="renderArUcoMarkers()">Render ArUco</button>
+                <button class="btn btn-small" onclick="unrenderArUcoMarkers()">Unrender ArUco</button>
                 <button class="btn btn-small btn-secondary" onclick="hideFloatingControls()">Close</button>
             </div>
         </div>
@@ -1124,57 +1167,57 @@ async def read_root():
                             <p style="margin: 0; font-size: 12px; color: #666;">Type: ${obj.userData.type}</p>
                         </div>
                         
-                        <h4 style="margin-top: 15px; margin-bottom: 5px; font-size: 14px; color: #555;">Position (m)</h4>
-                        <div class="input-group" style="margin-bottom: 8px;">
-                            <label style="min-width: 30px;">X:</label>
-                            <input type="number" id="objPosX" class="control-input" step="0.0001" value="${pos.x.toFixed(4)}" 
+                        <h4 style="margin-top: 15px; margin-bottom: 8px; font-size: 13px; color: #555;">Position (m)</h4>
+                        <div class="transform-row">
+                            <label>X:</label>
+                            <input type="number" id="objPosX" class="control-input" step="0.0001" value="${pos.x.toFixed(4)}"
                                    onchange="setObjectPosition('x', parseFloat(this.value))">
                             <div class="control-buttons">
                                 <button class="btn btn-small axis-btn x" onclick="moveObject('x', -0.01)">-</button>
                                 <button class="btn btn-small axis-btn x" onclick="moveObject('x', 0.01)">+</button>
                             </div>
                         </div>
-                        <div class="input-group" style="margin-bottom: 8px;">
-                            <label style="min-width: 30px;">Y:</label>
-                            <input type="number" id="objPosY" class="control-input" step="0.0001" value="${pos.y.toFixed(4)}" 
+                        <div class="transform-row">
+                            <label>Y:</label>
+                            <input type="number" id="objPosY" class="control-input" step="0.0001" value="${pos.y.toFixed(4)}"
                                    onchange="setObjectPosition('y', parseFloat(this.value))">
                             <div class="control-buttons">
                                 <button class="btn btn-small axis-btn y" onclick="moveObject('y', -0.01)">-</button>
                                 <button class="btn btn-small axis-btn y" onclick="moveObject('y', 0.01)">+</button>
                             </div>
                         </div>
-                        <div class="input-group" style="margin-bottom: 15px;">
-                            <label style="min-width: 30px;">Z:</label>
-                            <input type="number" id="objPosZ" class="control-input" step="0.0001" value="${pos.z.toFixed(4)}" 
+                        <div class="transform-row">
+                            <label>Z:</label>
+                            <input type="number" id="objPosZ" class="control-input" step="0.0001" value="${pos.z.toFixed(4)}"
                                    onchange="setObjectPosition('z', parseFloat(this.value))">
                             <div class="control-buttons">
                                 <button class="btn btn-small axis-btn z" onclick="moveObject('z', -0.01)">-</button>
                                 <button class="btn btn-small axis-btn z" onclick="moveObject('z', 0.01)">+</button>
                             </div>
                         </div>
-                        
-                        <h4 style="margin-top: 15px; margin-bottom: 5px; font-size: 14px; color: #555;">Rotation (degrees)</h4>
-                        <div class="input-group" style="margin-bottom: 8px;">
-                            <label style="min-width: 60px;">Roll (X):</label>
-                            <input type="number" id="objRotX" class="control-input" step="1" value="${(rot.x * 180 / Math.PI).toFixed(1)}" 
+
+                        <h4 style="margin-top: 12px; margin-bottom: 8px; font-size: 13px; color: #555;">Rotation (deg)</h4>
+                        <div class="transform-row">
+                            <label>Roll:</label>
+                            <input type="number" id="objRotX" class="control-input" step="1" value="${(rot.x * 180 / Math.PI).toFixed(1)}"
                                    onchange="setObjectRotation('x', this.value * Math.PI / 180)">
                             <div class="control-buttons">
                                 <button class="btn btn-small axis-btn x" onclick="rotateObject('x', -Math.PI / 36)">-</button>
                                 <button class="btn btn-small axis-btn x" onclick="rotateObject('x', Math.PI / 36)">+</button>
                             </div>
                         </div>
-                        <div class="input-group" style="margin-bottom: 8px;">
-                            <label style="min-width: 60px;">Pitch (Y):</label>
-                            <input type="number" id="objRotY" class="control-input" step="1" value="${(rot.y * 180 / Math.PI).toFixed(1)}" 
+                        <div class="transform-row">
+                            <label>Pitch:</label>
+                            <input type="number" id="objRotY" class="control-input" step="1" value="${(rot.y * 180 / Math.PI).toFixed(1)}"
                                    onchange="setObjectRotation('y', this.value * Math.PI / 180)">
                             <div class="control-buttons">
                                 <button class="btn btn-small axis-btn y" onclick="rotateObject('y', -Math.PI / 36)">-</button>
                                 <button class="btn btn-small axis-btn y" onclick="rotateObject('y', Math.PI / 36)">+</button>
                             </div>
                         </div>
-                        <div class="input-group" style="margin-bottom: 15px;">
-                            <label style="min-width: 60px;">Yaw (Z):</label>
-                            <input type="number" id="objRotZ" class="control-input" step="1" value="${(rot.z * 180 / Math.PI).toFixed(1)}" 
+                        <div class="transform-row">
+                            <label>Yaw:</label>
+                            <input type="number" id="objRotZ" class="control-input" step="1" value="${(rot.z * 180 / Math.PI).toFixed(1)}"
                                    onchange="setObjectRotation('z', this.value * Math.PI / 180)">
                             <div class="control-buttons">
                                 <button class="btn btn-small axis-btn z" onclick="rotateObject('z', -Math.PI / 36)">-</button>
@@ -1444,7 +1487,215 @@ async def read_root():
                 updateStatus("Assembly exported to downloads");
             }
             window.exportAssembly = exportAssembly;
-            
+
+            function exportPNG() {
+                // Hide grid and axes for export
+                const gridWasVisible = gridHelper && gridHelper.visible;
+                const axesWasVisible = axesHelper && axesHelper.visible;
+                if (gridHelper) gridHelper.visible = false;
+                if (axesHelper) axesHelper.visible = false;
+
+                // Remove scene background for transparency
+                const originalBackground = scene.background;
+                scene.background = null;
+
+                // Store original colors and change for export, hide markers
+                const colorChanges = [];
+                const hiddenMarkers = [];
+                sceneObjects.forEach(obj => {
+                    if (obj.userData) {
+                        if (obj.userData.type === 'marker') {
+                            // Hide ArUco markers
+                            if (obj.visible) {
+                                obj.visible = false;
+                                hiddenMarkers.push(obj);
+                            }
+                        } else if (obj.material) {
+                            const originalColor = obj.material.color.getHex();
+                            if (obj.userData.type === 'component') {
+                                // Change wireframes to black
+                                obj.material.color.setHex(0x000000);
+                                colorChanges.push({ obj, originalColor });
+                            } else if (obj.userData.type === 'grasp_point') {
+                                // Change grasp points to red
+                                obj.material.color.setHex(0xff0000);
+                                if (obj.material.emissive) {
+                                    obj.material.emissive.setHex(0xff0000);
+                                }
+                                colorChanges.push({ obj, originalColor, isGrasp: true });
+                            }
+                        }
+                    }
+                });
+
+                // Create a new renderer for export with transparency
+                const exportRenderer = new THREE.WebGLRenderer({
+                    antialias: true,
+                    alpha: true,
+                    preserveDrawingBuffer: true
+                });
+                exportRenderer.setSize(1920, 1080);
+                exportRenderer.setClearColor(0x000000, 0);
+                exportRenderer.shadowMap.enabled = true;
+                exportRenderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+                // Adjust camera aspect ratio for export resolution
+                const originalAspect = camera.aspect;
+                camera.aspect = 1920 / 1080;
+                camera.updateProjectionMatrix();
+
+                // Render scene
+                exportRenderer.render(scene, camera);
+
+                // Get image data and download
+                const dataURL = exportRenderer.domElement.toDataURL('image/png');
+                const link = document.createElement('a');
+                link.href = dataURL;
+                link.download = `scene_${new Date().toISOString().split('T')[0]}.png`;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+
+                // Restore camera aspect ratio
+                camera.aspect = originalAspect;
+                camera.updateProjectionMatrix();
+
+                // Restore scene background
+                scene.background = originalBackground;
+
+                // Restore original colors
+                colorChanges.forEach(({ obj, originalColor, isGrasp }) => {
+                    obj.material.color.setHex(originalColor);
+                    if (isGrasp && obj.material.emissive) {
+                        obj.material.emissive.setHex(originalColor);
+                    }
+                });
+
+                // Restore marker visibility
+                hiddenMarkers.forEach(marker => {
+                    marker.visible = true;
+                });
+
+                // Restore grid and axes visibility
+                if (gridHelper) gridHelper.visible = gridWasVisible;
+                if (axesHelper) axesHelper.visible = axesWasVisible;
+
+                // Dispose of export renderer
+                exportRenderer.dispose();
+
+                showMessage("PNG exported (1920×1080, transparent)", "success");
+                updateStatus("PNG image exported to downloads");
+            }
+            window.exportPNG = exportPNG;
+
+            async function renderArUcoMarkers() {
+                // Find all marker objects in the scene
+                const markerObjects = sceneObjects.filter(obj =>
+                    obj.userData && obj.userData.type === 'marker'
+                );
+
+                if (markerObjects.length === 0) {
+                    showMessage("No ArUco markers in scene to render", "info");
+                    return;
+                }
+
+                updateStatus("Rendering ArUco marker textures...");
+                showMessage("Loading ArUco textures...", "info");
+
+                const textureLoader = new THREE.TextureLoader();
+                let renderedCount = 0;
+
+                for (const marker of markerObjects) {
+                    const arucoId = marker.userData.arucoId;
+                    if (arucoId === undefined) continue;
+
+                    const dictionary = 'DICT_4X4_50';
+                    const markerImageUrl = `/api/marker-image?dictionary=${encodeURIComponent(dictionary)}&marker_id=${arucoId}&size=512`;
+
+                    try {
+                        const texture = await new Promise((resolve, reject) => {
+                            textureLoader.load(
+                                markerImageUrl,
+                                (texture) => {
+                                    texture.wrapS = THREE.ClampToEdgeWrapping;
+                                    texture.wrapT = THREE.ClampToEdgeWrapping;
+                                    texture.minFilter = THREE.LinearMipmapLinearFilter;
+                                    texture.magFilter = THREE.LinearFilter;
+                                    texture.generateMipmaps = true;
+                                    texture.flipY = true;
+                                    texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+                                    resolve(texture);
+                                },
+                                undefined,
+                                (error) => {
+                                    console.warn('Failed to load marker texture:', error);
+                                    resolve(null);
+                                }
+                            );
+                        });
+
+                        if (texture) {
+                            // Replace material with textured material
+                            const newMaterial = new THREE.MeshStandardMaterial({
+                                map: texture,
+                                color: 0xffffff,
+                                side: THREE.DoubleSide,
+                                transparent: false,
+                                depthWrite: true,
+                                depthTest: true
+                            });
+
+                            // Dispose old material
+                            if (marker.material) {
+                                marker.material.dispose();
+                            }
+                            marker.material = newMaterial;
+                            marker.userData.originalColor = 0xffffff;
+                            renderedCount++;
+                        }
+                    } catch (error) {
+                        console.error('Error rendering marker:', error);
+                    }
+                }
+
+                showMessage(`Rendered ${renderedCount} ArUco marker textures`, "success");
+                updateStatus(`ArUco textures applied to ${renderedCount} markers`);
+            }
+            window.renderArUcoMarkers = renderArUcoMarkers;
+
+            function unrenderArUcoMarkers() {
+                const markerObjects = sceneObjects.filter(obj =>
+                    obj.userData && obj.userData.type === 'marker'
+                );
+
+                if (markerObjects.length === 0) {
+                    showMessage("No ArUco markers in scene", "info");
+                    return;
+                }
+
+                let resetCount = 0;
+                for (const marker of markerObjects) {
+                    if (marker.material) {
+                        if (marker.material.map) {
+                            marker.material.map.dispose();
+                        }
+                        marker.material.dispose();
+                    }
+
+                    marker.material = new THREE.MeshBasicMaterial({
+                        color: 0xff6b6b,
+                        transparent: true,
+                        opacity: 0.7
+                    });
+                    marker.userData.originalColor = 0xff6b6b;
+                    resetCount++;
+                }
+
+                showMessage(`Reset ${resetCount} ArUco markers`, "success");
+                updateStatus(`ArUco markers reset to default`);
+            }
+            window.unrenderArUcoMarkers = unrenderArUcoMarkers;
+
             async function loadAssemblyFromFile(event) {
                 const file = event.target.files[0];
                 if (!file) return;
@@ -2044,6 +2295,25 @@ async def save_assembly(assembly_data: dict):
 async def get_assemblies():
     """Get all saved assemblies."""
     return assembly_state["assemblies"]
+
+@app.get("/api/marker-image")
+async def get_marker_image(
+    dictionary: str = Query("DICT_4X4_50", description="ArUco dictionary name"),
+    marker_id: int = Query(..., description="ArUco marker ID"),
+    size: int = Query(512, description="Image size in pixels")
+):
+    """Generate ArUco marker image and return as PNG."""
+    try:
+        marker_img = generate_aruco_marker(dictionary, marker_id, size)
+        _, buffer = cv2.imencode('.png', marker_img)
+        img_bytes = buffer.tobytes()
+        return Response(
+            content=img_bytes,
+            media_type="image/png",
+            headers={"Cache-Control": "public, max-age=31536000"}
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating marker image: {str(e)}")
 
 def find_available_port(start_port=8001, max_attempts=100):
     """Find an available port starting from start_port."""

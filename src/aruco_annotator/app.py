@@ -800,6 +800,7 @@ def get_html_interface():
                 <h3>💾 Export/Import</h3>
                 <button class="btn" onclick="exportAnnotations()">Export ArUco Annotations</button>
                 <button class="btn" onclick="exportWireframe()">Export Wireframe</button>
+                <button class="btn" onclick="exportPNG()">Export PNG (1920×1080)</button>
                 <input type="file" id="importFile" accept=".json" style="margin: 10px 0;">
                 <button class="btn" onclick="importAnnotations()">Import Annotations</button>
             </div>
@@ -948,6 +949,7 @@ def get_html_interface():
         let selectedMarkerMesh = null; // Reference to selected marker 3D object
         let placementMode = null;
         let raycaster, mouse;
+        let gridHelper, axesHelper;
         
         function init() {
             const container = document.getElementById('viewer');
@@ -986,7 +988,7 @@ def get_html_interface():
             renderer.domElement.addEventListener('click', onMouseClick);
             
             // Grid - rotate to make it horizontal in XY plane (Z-up)
-            const gridHelper = new THREE.GridHelper(10, 10, 0x444444, 0x222222);
+            gridHelper = new THREE.GridHelper(10, 10, 0x444444, 0x222222);
             gridHelper.rotateX(Math.PI / 2);  // Rotate 90 degrees to make it horizontal in XY plane
             scene.add(gridHelper);
             
@@ -1017,8 +1019,8 @@ def get_html_interface():
             
             axesGeometry.setAttribute('position', new THREE.BufferAttribute(axesVertices, 3));
             axesGeometry.setAttribute('color', new THREE.BufferAttribute(axesColors, 3));
-            
-            const axesHelper = new THREE.LineSegments(axesGeometry, axesMaterial);
+
+            axesHelper = new THREE.LineSegments(axesGeometry, axesMaterial);
             scene.add(axesHelper);
             
             animate();
@@ -2649,7 +2651,64 @@ def get_html_interface():
                 alert('Error: ' + error.message);
             }
         }
-        
+
+        function exportPNG() {
+            // Hide grid and axes for export
+            const gridWasVisible = gridHelper && gridHelper.visible;
+            const axesWasVisible = axesHelper && axesHelper.visible;
+            if (gridHelper) gridHelper.visible = false;
+            if (axesHelper) axesHelper.visible = false;
+
+            // Remove scene background for transparency
+            const originalBackground = scene.background;
+            scene.background = null;
+
+            // Create a new renderer for export with transparency
+            const exportRenderer = new THREE.WebGLRenderer({
+                antialias: true,
+                alpha: true,
+                preserveDrawingBuffer: true
+            });
+            exportRenderer.setSize(1920, 1080);
+            exportRenderer.setClearColor(0x000000, 0);
+
+            // Adjust camera aspect ratio for export resolution
+            const originalAspect = camera.aspect;
+            camera.aspect = 1920 / 1080;
+            camera.updateProjectionMatrix();
+
+            // Render scene
+            exportRenderer.render(scene, camera);
+
+            // Get image data and download
+            const dataURL = exportRenderer.domElement.toDataURL('image/png');
+            const link = document.createElement('a');
+            link.href = dataURL;
+            const filename = session_state.current_file ?
+                session_state.current_file.replace(/\.[^/.]+$/, '') + '_scene.png' :
+                'scene.png';
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+
+            // Restore camera aspect ratio
+            camera.aspect = originalAspect;
+            camera.updateProjectionMatrix();
+
+            // Restore scene background
+            scene.background = originalBackground;
+
+            // Restore grid and axes visibility
+            if (gridHelper) gridHelper.visible = gridWasVisible;
+            if (axesHelper) axesHelper.visible = axesWasVisible;
+
+            // Dispose of export renderer
+            exportRenderer.dispose();
+
+            alert('PNG exported (1920×1080, transparent background)');
+        }
+
         async function importAnnotations() {
             const fileInput = document.getElementById('importFile');
             const file = fileInput.files[0];
