@@ -642,6 +642,7 @@ async def read_root():
             <div class="controls-grid">
                 <button class="btn btn-small" onclick="toggleGrid()">Toggle Grid</button>
                 <button class="btn btn-small" onclick="resetCamera()">Reset Camera</button>
+                <button class="btn btn-small" onclick="checkCollisions()">Check Collisions</button>
                 <button class="btn btn-small" onclick="exportAssembly()">Export Assembly</button>
                 <button class="btn btn-small" onclick="document.getElementById('assemblyFileInput').click()">Load Assembly</button>
                 <button class="btn btn-small" onclick="exportPNG()">Export PNG</button>
@@ -1724,6 +1725,237 @@ async def read_root():
                 updateStatus(`ArUco markers reset to default`);
             }
             window.unrenderArUcoMarkers = unrenderArUcoMarkers;
+
+            // Collision Detection Functions
+            function checkCollisions() {
+                // Get all component objects (exclude markers, grid, axes, grasp points)
+                const components = sceneObjects.filter(obj =>
+                    obj.userData && obj.userData.type === 'component'
+                );
+
+                if (components.length < 2) {
+                    showMessage("Need at least 2 components to check collisions", "info");
+                    return;
+                }
+
+                // Clear any previous collision highlights
+                clearCollisionHighlights();
+
+                // Find all colliding pairs
+                const collidingPairs = [];
+                for (let i = 0; i < components.length; i++) {
+                    for (let j = i + 1; j < components.length; j++) {
+                        if (checkObjectsCollide(components[i], components[j])) {
+                            collidingPairs.push([components[i], components[j]]);
+                        }
+                    }
+                }
+
+                if (collidingPairs.length === 0) {
+                    showMessage("No collisions detected! ✓", "success");
+                    updateStatus("No collisions found");
+                } else {
+                    // Highlight colliding objects
+                    const collidingObjects = new Set();
+                    collidingPairs.forEach(pair => {
+                        collidingObjects.add(pair[0]);
+                        collidingObjects.add(pair[1]);
+                    });
+
+                    collidingObjects.forEach(obj => {
+                        highlightCollision(obj);
+                    });
+
+                    const collisionList = collidingPairs.map(pair =>
+                        `${pair[0].userData.displayName} ↔ ${pair[1].userData.displayName}`
+                    ).join(', ');
+
+                    showMessage(`⚠ ${collidingPairs.length} collision(s) detected: ${collisionList}`, "error");
+                    updateStatus(`Found ${collidingPairs.length} collision(s)`);
+                }
+            }
+            window.checkCollisions = checkCollisions;
+
+            function checkObjectsCollide(obj1, obj2) {
+                // First do a quick bounding box check
+                const box1 = new THREE.Box3().setFromObject(obj1);
+                const box2 = new THREE.Box3().setFromObject(obj2);
+
+                // If bounding boxes don't intersect, no collision possible
+                if (!box1.intersectsBox(box2)) {
+                    return false;
+                }
+
+                // Get all edges from both objects
+                const edges1 = getWorldSpaceEdges(obj1);
+                const edges2 = getWorldSpaceEdges(obj2);
+
+                // Check for actual edge intersections (touching/crossing)
+                // Only triggers when wireframes actually touch each other
+                for (const edge1 of edges1) {
+                    for (const edge2 of edges2) {
+                        if (edgesIntersect(edge1, edge2)) {
+                            return true;
+                        }
+                    }
+                }
+
+                return false;
+            }
+
+            function getWorldSpaceEdges(obj) {
+                const edges = [];
+                const positionAttribute = obj.geometry.getAttribute('position');
+                if (!positionAttribute) return edges;
+
+                // LineSegments geometry stores edges as consecutive pairs of vertices
+                for (let i = 0; i < positionAttribute.count; i += 2) {
+                    const v1 = new THREE.Vector3();
+                    const v2 = new THREE.Vector3();
+
+                    v1.fromBufferAttribute(positionAttribute, i);
+                    v2.fromBufferAttribute(positionAttribute, i + 1);
+
+                    // Transform to world coordinates
+                    v1.applyMatrix4(obj.matrixWorld);
+                    v2.applyMatrix4(obj.matrixWorld);
+
+                    edges.push({ start: v1, end: v2 });
+                }
+
+                return edges;
+            }
+
+            function edgesIntersect(edge1, edge2) {
+                // Check if two 3D line segments actually intersect (touch or cross)
+                // Returns true only if the edges are touching within a small tolerance
+
+                const p1 = edge1.start;
+                const p2 = edge1.end;
+                const p3 = edge2.start;
+                const p4 = edge2.end;
+
+                const d1 = new THREE.Vector3().subVectors(p2, p1);
+                const d2 = new THREE.Vector3().subVectors(p4, p3);
+                const r = new THREE.Vector3().subVectors(p1, p3);
+
+                const a = d1.dot(d1);
+                const b = d1.dot(d2);
+                const c = d2.dot(d2);
+                const d = d1.dot(r);
+                const e = d2.dot(r);
+
+                const denom = a * c - b * b;
+
+                // Tolerance for considering edges as "touching"
+                // This is a very small value to only detect actual contact
+                const touchTolerance = 0.0001; // 0.1mm - essentially touching
+
+                let s, t;
+
+                if (Math.abs(denom) < 1e-10) {
+                    // Lines are parallel - check if they overlap
+                    s = 0;
+                    t = d / b;
+
+                    // For parallel lines, check if they're collinear and overlapping
+                    const c1 = new THREE.Vector3().copy(p1).addScaledVector(d1, s);
+                    const c2 = new THREE.Vector3().copy(p3).addScaledVector(d2, Math.max(0, Math.min(1, t)));
+                    const distance = c1.distanceTo(c2);
+
+                    if (distance < touchTolerance) {
+                        // Check if segments actually overlap (not just parallel and close)
+                        return checkParallelSegmentOverlap(p1, p2, p3, p4, touchTolerance);
+                    }
+                    return false;
+                }
+
+                // Calculate closest points on both segments
+                s = (b * e - c * d) / denom;
+                t = (a * e - b * d) / denom;
+
+                // Check if closest points are within segment bounds
+                // If s or t is outside [0,1], the closest point is at an endpoint
+                const sInBounds = s >= -touchTolerance && s <= 1 + touchTolerance;
+                const tInBounds = t >= -touchTolerance && t <= 1 + touchTolerance;
+
+                if (!sInBounds || !tInBounds) {
+                    // Closest points are outside segments, need to check endpoints
+                    s = Math.max(0, Math.min(1, s));
+                    t = Math.max(0, Math.min(1, t));
+
+                    // Recalculate with clamped values
+                    if (s <= 0 || s >= 1) {
+                        t = (s <= 0) ? -d / b : (a - d) / b;
+                        t = Math.max(0, Math.min(1, t));
+                    }
+                    if (t <= 0 || t >= 1) {
+                        s = (t <= 0) ? -e / a : (b - e) / a;
+                        s = Math.max(0, Math.min(1, s));
+                    }
+                }
+
+                // Calculate the closest points
+                const c1 = new THREE.Vector3().copy(p1).addScaledVector(d1, s);
+                const c2 = new THREE.Vector3().copy(p3).addScaledVector(d2, t);
+
+                // Only return true if edges are actually touching (within tolerance)
+                return c1.distanceTo(c2) < touchTolerance;
+            }
+
+            function checkParallelSegmentOverlap(p1, p2, p3, p4, tolerance) {
+                // For parallel segments, check if they actually overlap
+                // Project all points onto the line direction and check for overlap
+
+                const dir = new THREE.Vector3().subVectors(p2, p1).normalize();
+
+                // Project all points onto the line
+                const t1 = 0;
+                const t2 = new THREE.Vector3().subVectors(p2, p1).dot(dir);
+                const t3 = new THREE.Vector3().subVectors(p3, p1).dot(dir);
+                const t4 = new THREE.Vector3().subVectors(p4, p1).dot(dir);
+
+                // Check distance from p3 and p4 to the line defined by p1-p2
+                const linePoint = new THREE.Vector3().copy(p1).addScaledVector(dir, t3);
+                const distToLine = p3.distanceTo(linePoint);
+
+                if (distToLine > tolerance) {
+                    return false; // Parallel but not collinear
+                }
+
+                // Check if the projected intervals overlap
+                const min1 = Math.min(t1, t2);
+                const max1 = Math.max(t1, t2);
+                const min2 = Math.min(t3, t4);
+                const max2 = Math.max(t3, t4);
+
+                // Intervals overlap if max of mins < min of maxes
+                return Math.max(min1, min2) <= Math.min(max1, max2) + tolerance;
+            }
+
+            function highlightCollision(object) {
+                if (object.material) {
+                    // Store original color if not already stored for collision
+                    if (!object.userData.collisionOriginalColor) {
+                        object.userData.collisionOriginalColor = object.material.color.getHex();
+                    }
+                    // Set collision color (red)
+                    object.material.color.setHex(0xff0000);
+                    object.userData.isCollisionHighlighted = true;
+                }
+            }
+
+            function clearCollisionHighlights() {
+                sceneObjects.forEach(obj => {
+                    if (obj.userData && obj.userData.isCollisionHighlighted) {
+                        if (obj.material && obj.userData.collisionOriginalColor !== undefined) {
+                            obj.material.color.setHex(obj.userData.collisionOriginalColor);
+                            delete obj.userData.collisionOriginalColor;
+                            delete obj.userData.isCollisionHighlighted;
+                        }
+                    }
+                });
+            }
 
             async function loadAssemblyFromFile(event) {
                 const file = event.target.files[0];
