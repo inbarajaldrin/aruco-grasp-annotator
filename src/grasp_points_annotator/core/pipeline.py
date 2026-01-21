@@ -69,21 +69,31 @@ class CADToGraspPipeline:
         
         return cad_path, aruco_path
     
-    def render_top_down_image(self, object_name, marker_id, camera_distance=0.5):
+    def render_top_down_image(self, object_name, marker_id, camera_distance=0.5, use_mtl_color=False):
         """
         Render a top-down view of the object with specified marker facing up.
-        
+
         Args:
             object_name: Name of the object
             marker_id: ArUco marker ID to face up
             camera_distance: Camera distance from object
-            
+            use_mtl_color: If True, use color from MTL file
+
         Returns:
             Dictionary with rendering data
         """
         # Find files
         cad_path, aruco_path = self.find_object_files(object_name)
-        
+
+        # Find MTL file if using MTL color
+        mtl_path = None
+        if use_mtl_color:
+            # Try to find MTL file with same name as object
+            mtl_path = self.models_dir / f"{object_name}.mtl"
+            if not mtl_path.exists():
+                print(f"Warning: MTL file not found at {mtl_path}, using default color")
+                mtl_path = None
+
         # Render
         output_image = self.outputs_dir / f"{object_name}_marker{marker_id}_topdown.png"
         render_data = self.renderer.render_object_with_marker_up(
@@ -91,7 +101,9 @@ class CADToGraspPipeline:
             aruco_json_path=aruco_path,
             marker_id=marker_id,
             output_image_path=output_image,
-            camera_distance=camera_distance
+            camera_distance=camera_distance,
+            use_mtl_color=use_mtl_color,
+            mtl_path=str(mtl_path) if mtl_path else None
         )
         
         render_data['output_image_path'] = output_image
@@ -177,22 +189,23 @@ class CADToGraspPipeline:
         
         return output_json
     
-    def run(self, object_name, marker_id, camera_distance=0.5, min_area_threshold=1000):
+    def run(self, object_name, marker_id, camera_distance=0.5, min_area_threshold=1000, use_mtl_color=False):
         """
         Run the complete pipeline.
-        
+
         Args:
             object_name: Name of the object (e.g., "base_scaled70")
             marker_id: ArUco marker ID to use as reference
             camera_distance: Camera distance for rendering
             min_area_threshold: Minimum area threshold for filtering regions
-            
+            use_mtl_color: If True, use color from MTL file
+
         Returns:
             Dictionary containing all pipeline outputs
         """
         try:
             # Step 1: Render top-down view
-            render_data = self.render_top_down_image(object_name, marker_id, camera_distance)
+            render_data = self.render_top_down_image(object_name, marker_id, camera_distance, use_mtl_color)
             
             # Step 2: Detect 2D grasp points
             points_2d, regions, mask = self.detect_grasp_points_2d(

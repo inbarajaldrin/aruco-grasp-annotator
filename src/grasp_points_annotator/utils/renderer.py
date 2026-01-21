@@ -6,20 +6,47 @@ import cv2
 from pathlib import Path
 import json
 from scipy.spatial.transform import Rotation as R
+import re
 
 
 class CADRenderer:
     """Renders CAD models with specific ArUco marker orientations"""
-    
+
     def __init__(self, image_size=(1024, 1024)):
         """
         Initialize the CAD renderer.
-        
+
         Args:
             image_size: Tuple of (width, height) for the rendered image
         """
         self.image_size = image_size
         self.vis = None
+
+    def parse_mtl_color(self, mtl_path):
+        """
+        Parse color from MTL file.
+
+        Args:
+            mtl_path: Path to the MTL file
+
+        Returns:
+            Tuple of (R, G, B) color values in 0-255 range, or None if not found
+        """
+        try:
+            with open(mtl_path, 'r') as f:
+                content = f.read()
+
+            # Look for Kd (diffuse color) line
+            # Format: Kd R G B (values are 0-1)
+            match = re.search(r'Kd\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)', content)
+            if match:
+                r, g, b = float(match.group(1)), float(match.group(2)), float(match.group(3))
+                # Convert from 0-1 to 0-255, keep RGB format (render_top_down_view uses RGB)
+                return (int(r * 255), int(g * 255), int(b * 255))
+            return None
+        except Exception as e:
+            print(f"Warning: Could not parse MTL file {mtl_path}: {e}")
+            return None
         
     def load_aruco_annotation(self, aruco_json_path):
         """
@@ -95,17 +122,18 @@ class CADRenderer:
         
         return transform
     
-    def render_top_down_view(self, mesh, transform, camera_distance=0.5):
+    def render_top_down_view(self, mesh, transform, camera_distance=0.5, fill_color=None):
         """
         Render a true orthographic top-down view using direct vertex projection.
-        
+
         Args:
             mesh: Open3D TriangleMesh object
             transform: 4x4 transformation matrix
             camera_distance: Distance of camera from the object center (not used in ortho)
-            
+            fill_color: Optional (R, G, B) color tuple for triangles. If None, uses default gray.
+
         Returns:
-            Rendered image as numpy array (RGB), depth image, and camera intrinsics
+            Rendered image as numpy array (RGBA with transparent background), depth image, and camera intrinsics
         """
         # Apply transformation to mesh
         mesh_transformed = o3d.geometry.TriangleMesh(mesh)
@@ -143,8 +171,11 @@ class CADRenderer:
             
             return int(img_x), int(img_y)
         
-        # Create blank image and depth buffer
-        image_np = np.ones((self.image_size[1], self.image_size[0], 3), dtype=np.uint8) * 45  # Dark gray background
+        # Create blank image with alpha channel (RGBA) and depth buffer
+        # Initialize with transparent background (alpha = 0)
+        image_np = np.zeros((self.image_size[1], self.image_size[0], 4), dtype=np.uint8)
+        image_np[:, :, :3] = 45  # Dark gray background (RGB channels)
+        image_np[:, :, 3] = 0    # Fully transparent (alpha channel)
         
         # For orthographic projection, depth is just the Z coordinate
         # We'll store the max Z (top surface) for each pixel
@@ -165,9 +196,12 @@ class CADRenderer:
             
             # Draw filled triangle
             pts = np.array([p0, p1, p2], dtype=np.int32)
-            
-            # Fill triangle with color (light blue/gray)
-            cv2.fillPoly(image_np, [pts], color=(180, 180, 180))
+
+            # Fill triangle with color (use provided color or default gray) and full opacity
+            triangle_color = fill_color if fill_color is not None else (180, 180, 180)
+            # Add alpha channel (255 = fully opaque)
+            triangle_color_rgba = (*triangle_color, 255)
+            cv2.fillPoly(image_np, [pts], color=triangle_color_rgba)
             
             # Simple depth: use average Z of triangle
             avg_depth = (z0 + z1 + z2) / 3.0
@@ -185,10 +219,11 @@ class CADRenderer:
             p0 = world_to_image(v0)
             p1 = world_to_image(v1)
             p2 = world_to_image(v2)
-            
-            cv2.line(image_np, p0, p1, (120, 120, 120), 1)
-            cv2.line(image_np, p1, p2, (120, 120, 120), 1)
-            cv2.line(image_np, p2, p0, (120, 120, 120), 1)
+
+            # Edge color with alpha channel
+            cv2.line(image_np, p0, p1, (120, 120, 120, 255), 1)
+            cv2.line(image_np, p1, p2, (120, 120, 120, 255), 1)
+            cv2.line(image_np, p2, p0, (120, 120, 120, 255), 1)
         
         # Create intrinsic parameters for orthographic projection
         # For orthographic projection with our direct vertex mapping:
@@ -212,18 +247,21 @@ class CADRenderer:
         
         return image_np, depth_np, intrinsic, extrinsic, mesh_center
     
-    def render_object_with_marker_up(self, obj_path, aruco_json_path, marker_id, 
-                                     output_image_path=None, camera_distance=0.5):
+    def render_object_with_marker_up(self, obj_path, aruco_json_path, marker_id,
+                                     output_image_path=None, camera_distance=0.5,
+                                     use_mtl_color=False, mtl_path=None):
         """
         Main function to render an object with a specific marker facing up.
-        
+
         Args:
             obj_path: Path to the OBJ/STL/PLY CAD file
             aruco_json_path: Path to the ArUco annotation JSON
             marker_id: The ArUco marker ID that should face up
             output_image_path: Optional path to save the rendered image
             camera_distance: Distance of camera from object center
-            
+            use_mtl_color: If True, use color from MTL file instead of default gray
+            mtl_path: Path to MTL file (required if use_mtl_color=True)
+
         Returns:
             Dictionary containing:
                 - image: Rendered RGB image
@@ -250,15 +288,23 @@ class CADRenderer:
         
         # Compute transformation to align marker facing up
         transform = self.compute_transform_to_align_marker(marker_data)
-        
+
+        # Determine fill color
+        fill_color = None
+        if use_mtl_color and mtl_path:
+            fill_color = self.parse_mtl_color(mtl_path)
+            if fill_color is None:
+                print(f"Warning: Could not parse color from MTL file, using default gray")
+
         # Render top-down view
         image, depth, intrinsics, extrinsics, mesh_center = self.render_top_down_view(
-            mesh, transform, camera_distance
+            mesh, transform, camera_distance, fill_color=fill_color
         )
         
         # Save image if requested
         if output_image_path:
-            cv2.imwrite(str(output_image_path), cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
+            # Convert RGBA to BGRA for OpenCV
+            cv2.imwrite(str(output_image_path), cv2.cvtColor(image, cv2.COLOR_RGBA2BGRA))
             
         return {
             'image': image,

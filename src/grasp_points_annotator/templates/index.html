@@ -271,6 +271,12 @@
                     <label for="minAreaThreshold">Min Area Threshold:</label>
                     <input type="number" id="minAreaThreshold" value="1000" step="100" min="100">
                 </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="useMtlColor"> Use MTL Color
+                    </label>
+                    <small style="color: #7f8c8d; display: block; margin-top: 5px;">Enable to use object color from MTL file instead of default gray</small>
+                </div>
             </div>
             
             <div class="controls-panel">
@@ -468,7 +474,8 @@
             try {
                 const cameraDistance = parseFloat(document.getElementById('cameraDistance').value);
                 const minAreaThreshold = parseInt(document.getElementById('minAreaThreshold').value);
-                
+                const useMtlColor = document.getElementById('useMtlColor').checked;
+
                 const response = await fetch('/api/pipeline/step1', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -476,7 +483,8 @@
                         object_name: currentObject,
                         marker_id: currentMarker,
                         camera_distance: cameraDistance,
-                        min_area_threshold: minAreaThreshold
+                        min_area_threshold: minAreaThreshold,
+                        use_mtl_color: useMtlColor
                     })
                 });
                 

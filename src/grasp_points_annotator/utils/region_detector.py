@@ -368,7 +368,23 @@ def visualize_center_points_only(original_image_path, mask, regions, output_path
     """Create visualization showing only the center points of each region"""
     # Load original image
     if Path(original_image_path).exists():
-        img = cv2.imread(original_image_path)
+        # Load with alpha channel to preserve transparency
+        img = cv2.imread(original_image_path, cv2.IMREAD_UNCHANGED)
+
+        # If RGBA, composite on white background
+        if img.shape[2] == 4:
+            # Create white background
+            white_bg = np.ones((img.shape[0], img.shape[1], 3), dtype=np.uint8) * 255
+
+            # Extract alpha channel
+            alpha = img[:, :, 3] / 255.0
+
+            # Composite: result = foreground * alpha + background * (1 - alpha)
+            for c in range(3):
+                white_bg[:, :, c] = (img[:, :, c] * alpha + white_bg[:, :, c] * (1 - alpha)).astype(np.uint8)
+
+            img = white_bg
+
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     else:
         # Create visualization from mask

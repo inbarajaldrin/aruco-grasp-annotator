@@ -156,30 +156,33 @@ async def run_step1(data: Dict[str, Any] = Body(...)):
         marker_id = data.get("marker_id")
         camera_distance = data.get("camera_distance", 0.5)
         min_area_threshold = data.get("min_area_threshold", 1000)
-        
+        use_mtl_color = data.get("use_mtl_color", False)
+
         if not object_name or marker_id is None:
             raise HTTPException(status_code=400, detail="object_name and marker_id are required")
-        
+
         # Initialize pipeline with absolute paths
         pipeline = CADToGraspPipeline(
-            data_dir=str(DATA_DIR.resolve()), 
+            data_dir=str(DATA_DIR.resolve()),
             outputs_dir=str(OUTPUTS_DIR.resolve())
         )
-        
+
         # Run pipeline
         result = pipeline.run(
             object_name=object_name,
             marker_id=marker_id,
             camera_distance=camera_distance,
-            min_area_threshold=min_area_threshold
+            min_area_threshold=min_area_threshold,
+            use_mtl_color=use_mtl_color
         )
         
         # Convert image to base64 for frontend
         import cv2
         import numpy as np
-        
+
         image = result['render_data']['image']
-        _, buffer = cv2.imencode('.png', cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
+        # Convert RGBA to BGRA for OpenCV encoding
+        _, buffer = cv2.imencode('.png', cv2.cvtColor(image, cv2.COLOR_RGBA2BGRA))
         image_base64 = base64.b64encode(buffer).decode('utf-8')
         
         # Get visualization image
