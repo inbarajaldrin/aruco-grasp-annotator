@@ -126,12 +126,12 @@ class Point2Dto3DMapper:
         
         return point_relative_to_marker_pos
     
-    def map_2d_points_to_3d_marker_relative(self, points_2d, depth_map, 
-                                           intrinsics, extrinsics, 
+    def map_2d_points_to_3d_marker_relative(self, points_2d, depth_map,
+                                           intrinsics, extrinsics,
                                            transform, marker_data, mesh_center):
         """
         Map multiple 2D points to 3D coordinates relative to ArUco marker.
-        
+
         Args:
             points_2d: List of (x, y) tuples in image coordinates
             depth_map: 2D array of depth values
@@ -140,47 +140,47 @@ class Point2Dto3DMapper:
             transform: Transformation matrix applied to align marker
             marker_data: Dictionary containing marker pose information
             mesh_center: Center of the transformed mesh (used during rendering to center the object)
-            
+
         Returns:
             List of 3D points relative to ArUco marker frame
         """
         points_3d_marker_relative = []
-        
+
         for pixel_x, pixel_y in points_2d:
             # Get depth at this pixel
             # Note: pixel coordinates might be floats, so we round them
             px = int(round(pixel_x))
             py = int(round(pixel_y))
-            
+
             # Check bounds
             if py < 0 or py >= depth_map.shape[0] or px < 0 or px >= depth_map.shape[1]:
                 continue
-            
+
             depth = depth_map[py, px]
-            
+
             # Skip if depth is invalid
             if depth <= 0 or np.isnan(depth) or np.isinf(depth):
                 continue
-            
+
             # Convert image pixel to camera coordinates
             point_camera = self.image_to_camera_coords(pixel_x, pixel_y, depth, intrinsics)
-            
+
             # Convert camera coordinates to world coordinates
             point_world = self.camera_to_world_coords(point_camera, extrinsics)
-            
+
             # Convert world coordinates to marker-relative coordinates
             point_marker_relative = self.world_to_marker_coords(
                 point_world, transform, marker_data, mesh_center
             )
-            
+
             points_3d_marker_relative.append(point_marker_relative)
-        
+
         return points_3d_marker_relative
     
     def save_grasp_points_json(self, points_3d, marker_id, object_name, output_path):
         """
         Save 3D grasp points to JSON file in a format compatible with robotics applications.
-        
+
         Args:
             points_3d: List of 3D points relative to ArUco marker
             marker_id: The ArUco marker ID
@@ -195,7 +195,7 @@ class Point2Dto3DMapper:
             "total_points": len(points_3d),
             "grasp_points": []
         }
-        
+
         for i, point in enumerate(points_3d):
             grasp_point = {
                 "id": i + 1,
@@ -212,9 +212,9 @@ class Point2Dto3DMapper:
                 }
             }
             grasp_data["grasp_points"].append(grasp_point)
-        
+
         with open(output_path, 'w') as f:
             json.dump(grasp_data, f, indent=2)
-        
+
         return grasp_data
 

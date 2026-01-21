@@ -216,18 +216,18 @@ async def run_step2(data: Dict[str, Any] = Body(...)):
         object_name = data.get("object_name")
         source_marker_id = data.get("source_marker_id")
         object_thickness = data.get("object_thickness", None)
-        
+
         if not object_name or source_marker_id is None:
             raise HTTPException(status_code=400, detail="object_name and source_marker_id are required")
-        
+
         # Find the grasp points JSON from step 1
         grasp_points_json = OUTPUTS_DIR / f"{object_name}_marker{source_marker_id}_grasp_points_3d.json"
         if not grasp_points_json.exists():
             raise HTTPException(
-                status_code=404, 
+                status_code=404,
                 detail=f"Grasp points file not found. Please run Step 1 first: {grasp_points_json}"
             )
-        
+
         # Run transformation with absolute paths
         output_file = annotate_grasp_points_to_all_markers(
             object_name=object_name,
@@ -236,11 +236,70 @@ async def run_step2(data: Dict[str, Any] = Body(...)):
             object_thickness=object_thickness,
             data_dir=str(DATA_DIR.resolve())
         )
-        
+
         # Load the output to return summary
         with open(output_file, 'r') as f:
             output_data = json.load(f)
-        
+
+        # Generate visualization with renumbered IDs
+        renumbered_viz_base64 = None
+        try:
+            # Load the rendered image from step 1
+            rendered_image_path = OUTPUTS_DIR / f"{object_name}_marker{source_marker_id}_topdown.png"
+
+            if rendered_image_path.exists():
+                # Load the mask
+                mask_path = OUTPUTS_DIR / "masks" / f"{object_name}_marker{source_marker_id}_mask.png"
+                if mask_path.exists():
+                    mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+                else:
+                    # Create a simple mask from the rendered image if not available
+                    rendered_image = cv2.imread(str(rendered_image_path))
+                    mask = cv2.cvtColor(rendered_image, cv2.COLOR_BGR2GRAY)
+
+                # Re-detect regions to get their pixel coordinates
+                # This ensures we have the exact center positions for visualization
+                pipeline = CADToGraspPipeline(
+                    data_dir=str(DATA_DIR.resolve()),
+                    outputs_dir=str(OUTPUTS_DIR.resolve())
+                )
+
+                _, regions, _ = pipeline.detect_grasp_points_2d(
+                    rendered_image_path, object_name, source_marker_id, min_area_threshold=1000
+                )
+
+                # The regions are already numbered, but after filtering, some may be missing
+                # We need to match the filtered grasp points to regions and renumber
+                with open(grasp_points_json, 'r') as f:
+                    step1_data = json.load(f)
+
+                # Get the IDs of grasp points that survived filtering
+                filtered_ids = {gp['id'] for gp in step1_data.get('grasp_points', [])}
+
+                # Filter regions to only those that survived, and renumber sequentially
+                renumbered_regions = []
+                for new_id, region in enumerate((r for r in regions if r['id'] in filtered_ids), 1):
+                    renumbered_region = region.copy()
+                    renumbered_region['id'] = new_id
+                    renumbered_regions.append(renumbered_region)
+
+                if renumbered_regions:
+                    # Generate renumbered visualization
+                    from .utils.region_detector import visualize_center_points_only
+
+                    renumbered_viz_output = OUTPUTS_DIR / f"{object_name}_marker{source_marker_id}_grasp_points_renumbered.png"
+                    visualize_center_points_only(str(rendered_image_path), mask, renumbered_regions, str(renumbered_viz_output))
+
+                    # Convert to base64
+                    with open(renumbered_viz_output, 'rb') as f:
+                        viz_data = f.read()
+                        renumbered_viz_base64 = base64.b64encode(viz_data).decode('utf-8')
+
+        except Exception as viz_error:
+            print(f"Warning: Could not generate renumbered visualization: {viz_error}")
+            import traceback
+            traceback.print_exc()
+
         return {
             "success": True,
             "object_name": object_name,
@@ -248,9 +307,10 @@ async def run_step2(data: Dict[str, Any] = Body(...)):
             "output_file": str(output_file),
             "total_grasp_points": output_data.get("total_grasp_points", 0),
             "total_markers": len(output_data.get("markers", [])),
-            "grasp_points": output_data.get("grasp_points", [])
+            "grasp_points": output_data.get("grasp_points", []),
+            "renumbered_visualization": f"data:image/png;base64,{renumbered_viz_base64}" if renumbered_viz_base64 else None
         }
-        
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

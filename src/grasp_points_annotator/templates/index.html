@@ -663,19 +663,35 @@
 
         function displayFilterResults(result) {
             const viewer = document.getElementById('viewer');
+
+            // Get the initial visualization from step1Result if available
+            const initialViz = step1Result && step1Result.visualization_image ? step1Result.visualization_image : null;
+
             viewer.innerHTML = `
                 <div class="filter-results-container">
                     <h3 style="color: white; margin-bottom: 20px; text-align: center;">Filter Results</h3>
 
-                    ${result.filtered_visualization ? `
-                    <div style="text-align: center; margin-bottom: 30px;">
-                        <h4 style="color: white; margin-bottom: 10px;">Filtered Grasp Points Visualization</h4>
-                        <img src="${result.filtered_visualization}" class="image-viewer" alt="Filtered grasp points">
-                        <p style="color: #95a5a6; text-align: center; margin-top: 10px;">
-                            Showing ${result.total_filtered} valid grasp points (${result.total_original - result.total_filtered} removed)
-                        </p>
+                    <div style="display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; margin-bottom: 30px;">
+                        ${initialViz ? `
+                        <div style="text-align: center;">
+                            <h4 style="color: white; margin-bottom: 10px;">Initial Grasp Points</h4>
+                            <img src="${initialViz}" class="image-viewer" alt="Initial grasp points">
+                            <p style="color: #95a5a6; text-align: center; margin-top: 10px;">
+                                ${result.total_original} grasp points detected
+                            </p>
+                        </div>
+                        ` : ''}
+
+                        ${result.filtered_visualization ? `
+                        <div style="text-align: center;">
+                            <h4 style="color: white; margin-bottom: 10px;">Filtered Grasp Points</h4>
+                            <img src="${result.filtered_visualization}" class="image-viewer" alt="Filtered grasp points">
+                            <p style="color: #95a5a6; text-align: center; margin-top: 10px;">
+                                ${result.total_filtered} valid grasp points (${result.total_original - result.total_filtered} removed)
+                            </p>
+                        </div>
+                        ` : ''}
                     </div>
-                    ` : ''}
 
                     <div style="color: white; margin-bottom: 20px; padding: 0 20px;">
                         <p><strong>Object:</strong> ${result.object_name}</p>
@@ -748,6 +764,17 @@
             const viewer = document.getElementById('viewer');
             viewer.innerHTML = `
                 <h3 style="color: white; margin-bottom: 20px;">Step 2 Results</h3>
+
+                ${result.renumbered_visualization ? `
+                <div style="text-align: center; margin-bottom: 30px;">
+                    <h4 style="color: white; margin-bottom: 10px;">Renumbered Grasp Points</h4>
+                    <img src="${result.renumbered_visualization}" class="image-viewer" alt="Renumbered grasp points">
+                    <p style="color: #95a5a6; text-align: center; margin-top: 10px;">
+                        Grasp points renumbered sequentially (1, 2, 3...) matching the output JSON
+                    </p>
+                </div>
+                ` : ''}
+
                 <div style="color: white; margin-bottom: 20px;">
                     <p><strong>Object:</strong> ${result.object_name}</p>
                     <p><strong>Source Marker:</strong> ${result.source_marker_id}</p>
