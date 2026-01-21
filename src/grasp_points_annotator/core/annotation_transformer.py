@@ -136,11 +136,12 @@ def annotate_grasp_points_to_all_markers(
         # 1. Convert from cm to meters
         # 2. Z is set to 0.0 (CAD center plane) regardless of marker Z offset
         point_m = point / 100.0
-        
+
         # Convert to CAD center frame (offset already accounted for in Step 1)
         point_in_cad_center = point_m
-        
-        grasp_points_in_cad.append({
+
+        # Create the grasp point with basic info
+        grasp_point = {
             "id": i + 1,
             "position": {
                 "x": float(point_in_cad_center[0]),
@@ -153,24 +154,33 @@ def annotate_grasp_points_to_all_markers(
                 "y": 0.0,
                 "z": 1.0
             }
-        })
+        }
+
+        # Preserve grasp_validity metadata if it exists
+        if 'grasp_validity' in adjusted_grasp_points[i]:
+            grasp_point['grasp_validity'] = adjusted_grasp_points[i]['grasp_validity']
+
+        grasp_points_in_cad.append(grasp_point)
     
-    # Create output data structure
+    # Create output data structure with filter metadata at the top
     all_markers_grasp_data = {
         "object_name": object_name,
         "display_name": object_name.replace('_', ' ').title(),
         "source_marker_id": source_marker_id,
         "object_thickness": object_thickness,
         "total_grasp_points": len(grasp_points_in_cad),
-        "coordinate_frame": "cad_center",
-        "grasp_points": grasp_points_in_cad,
-        "wireframe": {
-            "vertices": wireframe_data['vertices'],
-            "edges": wireframe_data['edges'],
-            "mesh_info": wireframe_data['mesh_info']
-        },
-        "markers": []
+        "coordinate_frame": "cad_center"
     }
+
+    # Add filter metadata right after basic metadata if it exists
+    if 'filter_applied' in grasp_data:
+        all_markers_grasp_data['filter_applied'] = grasp_data['filter_applied']
+    if 'filter_params' in grasp_data:
+        all_markers_grasp_data['filter_params'] = grasp_data['filter_params']
+
+    # Add grasp points and markers (wireframe removed - available separately in wireframe/ directory)
+    all_markers_grasp_data["grasp_points"] = grasp_points_in_cad
+    all_markers_grasp_data["markers"] = []
     
     # Add marker information (without per-marker grasp points)
     for marker in aruco_data['markers']:
@@ -200,13 +210,13 @@ def annotate_grasp_points_to_all_markers(
         
         all_markers_grasp_data["markers"].append(marker_grasp_data)
     
-    # Save to grasp directory
-    output_dir = data_path / "grasp"
+    # Save to grasp_points directory
+    output_dir = data_path / "grasp_points"
     output_dir.mkdir(exist_ok=True)
-    
-    output_file = output_dir / f"{object_name}_grasp_points_all_markers.json"
+
+    output_file = output_dir / f"{object_name}_grasp_points.json"
     with open(output_file, 'w') as f:
         json.dump(all_markers_grasp_data, f, indent=2)
-    
+
     return output_file
 

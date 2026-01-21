@@ -40,9 +40,15 @@
             display: flex;
             flex-direction: column;
             align-items: center;
-            justify-content: center;
+            justify-content: flex-start;
             padding: 20px;
             overflow-y: auto;
+            overflow-x: hidden;
+        }
+
+        #viewer {
+            width: 100%;
+            max-width: 100%;
         }
         
         .controls-panel {
@@ -176,19 +182,33 @@
         }
         
         .image-viewer {
-            max-width: 100%;
-            max-height: 70vh;
+            max-width: 90%;
+            max-height: 60vh;
+            width: auto;
+            height: auto;
             border: 2px solid #3498db;
             border-radius: 8px;
             box-shadow: 0 4px 15px rgba(0,0,0,0.3);
-            margin: 10px;
+            margin: 10px auto;
+            display: block;
         }
         
         .results-table {
             width: 100%;
+            max-width: 100%;
             border-collapse: collapse;
             margin-top: 15px;
             font-size: 13px;
+            overflow-x: auto;
+            display: block;
+        }
+
+        .results-table thead,
+        .results-table tbody,
+        .results-table tr {
+            display: table;
+            width: 100%;
+            table-layout: fixed;
         }
         
         .results-table th,
@@ -207,7 +227,21 @@
         .results-table tr:hover {
             background: #f5f5f5;
         }
-        
+
+        .filter-results-container {
+            width: 100%;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .filter-results-container > div {
+            margin-bottom: 20px;
+        }
+
+        .filter-results-container table {
+            font-size: 12px;
+        }
+
     </style>
 </head>
 <body>
@@ -245,6 +279,42 @@
                 <div id="step1-status"></div>
             </div>
             
+            <div class="controls-panel">
+                <h3>Filter Grasp Points</h3>
+                <div class="form-group">
+                    <label for="gripperMaxWidth">Gripper Max Width (mm):</label>
+                    <input type="number" id="gripperMaxWidth" value="70.0" step="1" min="10">
+                </div>
+                <div class="form-group">
+                    <label for="gripperHalfOpen">Gripper Half-Open Width (mm):</label>
+                    <input type="number" id="gripperHalfOpen" value="30.0" step="1" min="10">
+                </div>
+                <div class="form-group">
+                    <label for="gripperTipThickness">Gripper Tip Thickness (mm):</label>
+                    <input type="number" id="gripperTipThickness" value="20.0" step="1" min="5">
+                </div>
+                <div class="form-group">
+                    <label for="maxGapPx">Max Gap (px):</label>
+                    <input type="number" id="maxGapPx" value="20" step="1" min="0">
+                </div>
+                <div class="form-group">
+                    <label for="symmetryTolerance">Symmetry Tolerance (mm):</label>
+                    <input type="number" id="symmetryTolerance" value="10.0" step="0.5" min="0">
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="checkXAxis" checked> Check X-axis grasps
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="checkYAxis" checked> Check Y-axis grasps
+                    </label>
+                </div>
+                <button class="btn" id="applyFilter" onclick="applyFilter()" disabled>Apply Filter</button>
+                <div id="filter-status"></div>
+            </div>
+
             <div class="controls-panel">
                 <h3>Transform to All Markers</h3>
                 <div class="form-group">
@@ -429,9 +499,10 @@
                 // Show visualization
                 displayStep1Results(step1Result);
                 
-                // Enable Step 2
+                // Enable filter and Step 2
+                document.getElementById('applyFilter').disabled = false;
                 document.getElementById('runStep2').disabled = false;
-                
+
                 showMessage('Step 1 completed successfully!', 'success');
             } catch (error) {
                 statusDiv.innerHTML = `<div class="status-message error">Error: ${error.message}</div>`;
@@ -442,19 +513,87 @@
             }
         }
         
+        async function applyFilter() {
+            if (!step1Result) {
+                showMessage('Please run Step 1 first', 'warning');
+                return;
+            }
+
+            const btn = document.getElementById('applyFilter');
+            btn.disabled = true;
+            btn.textContent = 'Filtering...';
+
+            const statusDiv = document.getElementById('filter-status');
+            statusDiv.innerHTML = '<div class="status-message info">Applying grasp filter...</div>';
+
+            try {
+                const gripperMaxWidth = parseFloat(document.getElementById('gripperMaxWidth').value);
+                const gripperHalfOpen = parseFloat(document.getElementById('gripperHalfOpen').value);
+                const gripperTipThickness = parseFloat(document.getElementById('gripperTipThickness').value);
+                const maxGapPx = parseInt(document.getElementById('maxGapPx').value);
+                const symmetryTolerance = parseFloat(document.getElementById('symmetryTolerance').value);
+                const checkXAxis = document.getElementById('checkXAxis').checked;
+                const checkYAxis = document.getElementById('checkYAxis').checked;
+
+                const response = await fetch('/api/filter', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        object_name: currentObject,
+                        marker_id: currentMarker,
+                        gripper_max_width_mm: gripperMaxWidth,
+                        gripper_half_open_width_mm: gripperHalfOpen,
+                        gripper_tip_thickness_mm: gripperTipThickness,
+                        max_gap_px: maxGapPx,
+                        symmetry_tolerance_mm: symmetryTolerance,
+                        check_x_axis: checkXAxis,
+                        check_y_axis: checkYAxis
+                    })
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Filter failed');
+                }
+
+                const filterResult = await response.json();
+
+                // Update UI
+                statusDiv.innerHTML = `
+                    <div class="status-message success">
+                        Filter applied!<br>
+                        Original: ${filterResult.total_original} grasp points<br>
+                        Filtered: ${filterResult.total_filtered} grasp points<br>
+                        Removed: ${filterResult.total_original - filterResult.total_filtered} grasp points
+                    </div>
+                `;
+
+                // Display filter results
+                displayFilterResults(filterResult);
+
+                showMessage('Filter applied successfully!', 'success');
+            } catch (error) {
+                statusDiv.innerHTML = `<div class="status-message error">Error: ${error.message}</div>`;
+                showMessage('Filter failed: ' + error.message, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Apply Filter';
+            }
+        }
+
         async function runStep2() {
             if (!step1Result) {
                 showMessage('Please run Step 1 first', 'warning');
                 return;
             }
-            
+
             const btn = document.getElementById('runStep2');
             btn.disabled = true;
             btn.textContent = 'Running...';
-            
+
             const statusDiv = document.getElementById('step2-status');
             statusDiv.innerHTML = '<div class="status-message info">Running Step 2: Transforming to all markers...</div>';
-            
+
             try {
                 const objectThickness = document.getElementById('objectThickness').value;
                 const payload = {
@@ -464,20 +603,20 @@
                 if (objectThickness) {
                     payload.object_thickness = parseFloat(objectThickness);
                 }
-                
+
                 const response = await fetch('/api/pipeline/step2', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
                 });
-                
+
                 if (!response.ok) {
                     const error = await response.json();
                     throw new Error(error.detail || 'Step 2 failed');
                 }
-                
+
                 step2Result = await response.json();
-                
+
                 // Update UI
                 statusDiv.innerHTML = `
                     <div class="status-message success">
@@ -486,13 +625,13 @@
                         Total markers: ${step2Result.total_markers}
                     </div>
                 `;
-                
+
                 // Display results
                 displayStep2Results(step2Result);
-                
+
                 // Enable download
                 document.getElementById('downloadBtn').disabled = false;
-                
+
                 showMessage('Step 2 completed successfully!', 'success');
             } catch (error) {
                 statusDiv.innerHTML = `<div class="status-message error">Error: ${error.message}</div>`;
@@ -518,6 +657,89 @@
                         <img src="${result.visualization_image}" class="image-viewer" alt="Grasp points">
                     </div>
                     ` : ''}
+                </div>
+            `;
+        }
+
+        function displayFilterResults(result) {
+            const viewer = document.getElementById('viewer');
+            viewer.innerHTML = `
+                <div class="filter-results-container">
+                    <h3 style="color: white; margin-bottom: 20px; text-align: center;">Filter Results</h3>
+
+                    ${result.filtered_visualization ? `
+                    <div style="text-align: center; margin-bottom: 30px;">
+                        <h4 style="color: white; margin-bottom: 10px;">Filtered Grasp Points Visualization</h4>
+                        <img src="${result.filtered_visualization}" class="image-viewer" alt="Filtered grasp points">
+                        <p style="color: #95a5a6; text-align: center; margin-top: 10px;">
+                            Showing ${result.total_filtered} valid grasp points (${result.total_original - result.total_filtered} removed)
+                        </p>
+                    </div>
+                    ` : ''}
+
+                    <div style="color: white; margin-bottom: 20px; padding: 0 20px;">
+                        <p><strong>Object:</strong> ${result.object_name}</p>
+                        <p><strong>Marker:</strong> ${result.marker_id}</p>
+                        <p><strong>Original Grasp Points:</strong> ${result.total_original}</p>
+                        <p><strong>Filtered Grasp Points:</strong> ${result.total_filtered}</p>
+                        <p><strong>Removed:</strong> ${result.total_original - result.total_filtered}</p>
+                    </div>
+
+                    <div style="color: white; padding: 0 20px;">
+                        <h4>Filter Parameters:</h4>
+                        <div style="overflow-x: auto;">
+                            <table class="results-table" style="background: white; margin-top: 10px;">
+                                <tbody style="color: #2c3e50;">
+                                    <tr>
+                                        <td><strong>Gripper Max Width</strong></td>
+                                        <td>${result.filter_params.gripper_max_width_mm} mm</td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Gripper Half-Open Width</strong></td>
+                                        <td>${result.filter_params.gripper_half_open_width_mm} mm</td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Gripper Tip Thickness</strong></td>
+                                        <td>${result.filter_params.gripper_tip_thickness_mm} mm</td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Max Gap</strong></td>
+                                        <td>${result.filter_params.max_gap_px} px</td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Symmetry Tolerance</strong></td>
+                                        <td>${result.filter_params.symmetry_tolerance_mm} mm</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div style="color: white; margin-top: 20px; padding: 0 20px; margin-bottom: 30px;">
+                        <h4>Grasp Point Validity:</h4>
+                        <div style="overflow-x: auto;">
+                            <table class="results-table" style="background: white; margin-top: 10px;">
+                                <thead>
+                                    <tr>
+                                        <th>Grasp ID</th>
+                                        <th>X-axis</th>
+                                        <th>Y-axis</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody style="color: #2c3e50;">
+                                    ${result.filter_results.map(fr => `
+                                        <tr style="background: ${fr.is_valid ? '#d4edda' : '#f8d7da'};">
+                                            <td>${fr.grasp_id}</td>
+                                            <td>${fr.valid_x.length > 0 ? fr.valid_x.join(', ') : 'BLOCKED'}</td>
+                                            <td>${fr.valid_y.length > 0 ? fr.valid_y.join(', ') : 'BLOCKED'}</td>
+                                            <td>${fr.is_valid ? '✓ Valid' : '✗ Removed'}</td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
                 </div>
             `;
         }
