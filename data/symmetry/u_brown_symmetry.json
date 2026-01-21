@@ -1,7 +1,7 @@
 {
     "object_name": "u_brown",
     "fold_axes": {
-        "x": {
+        "y": {
             "fold": 2,
             "quaternions": [
                 {
