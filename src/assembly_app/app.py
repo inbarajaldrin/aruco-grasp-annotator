@@ -1161,7 +1161,7 @@ async def read_root():
                 const pos = obj.position;
                 const rot = obj.rotation;
                 
-                // Calculate quaternion from Euler angles
+                // Calculate quaternion from Euler angles (intrinsic XYZ, matches Three.js)
                 const c1 = Math.cos(rot.x / 2);
                 const c2 = Math.cos(rot.y / 2);
                 const c3 = Math.cos(rot.z / 2);
@@ -1169,12 +1169,12 @@ async def read_root():
                 const s2 = Math.sin(rot.y / 2);
                 const s3 = Math.sin(rot.z / 2);
                 const quat = {
-                    x: s1 * c2 * c3 - c1 * s2 * s3,
-                    y: c1 * s2 * c3 + s1 * c2 * s3,
-                    z: c1 * c2 * s3 - s1 * s2 * c3,
-                    w: c1 * c2 * c3 + s1 * s2 * s3
+                    x: s1 * c2 * c3 + c1 * s2 * s3,
+                    y: c1 * s2 * c3 - s1 * c2 * s3,
+                    z: c1 * c2 * s3 + s1 * s2 * c3,
+                    w: c1 * c2 * c3 - s1 * s2 * s3
                 };
-                
+
                 container.innerHTML = `
                     <div class="controls-panel">
                         <h3>🎛️ Object Transform</h3>
@@ -1324,7 +1324,7 @@ async def read_root():
                 const pos = selectedObject.position;
                 const rot = selectedObject.rotation;
                 
-                // Calculate quaternion from Euler angles
+                // Calculate quaternion from Euler angles (intrinsic XYZ, matches Three.js)
                 const c1 = Math.cos(rot.x / 2);
                 const c2 = Math.cos(rot.y / 2);
                 const c3 = Math.cos(rot.z / 2);
@@ -1332,12 +1332,12 @@ async def read_root():
                 const s2 = Math.sin(rot.y / 2);
                 const s3 = Math.sin(rot.z / 2);
                 const quat = {
-                    x: s1 * c2 * c3 - c1 * s2 * s3,
-                    y: c1 * s2 * c3 + s1 * c2 * s3,
-                    z: c1 * c2 * s3 - s1 * s2 * c3,
-                    w: c1 * c2 * c3 + s1 * s2 * s3
+                    x: s1 * c2 * c3 + c1 * s2 * s3,
+                    y: c1 * s2 * c3 - s1 * c2 * s3,
+                    z: c1 * c2 * s3 + s1 * s2 * c3,
+                    w: c1 * c2 * c3 - s1 * s2 * s3
                 };
-                
+
                 // Update display elements if they exist
                 const posEl = document.getElementById('objCurrentPos');
                 const rpyEl = document.getElementById('objCurrentRPY');
@@ -1450,7 +1450,7 @@ async def read_root():
                     .map(obj => {
                         const rot = obj.rotation;
                         
-                        // Calculate quaternion from Euler angles (Three.js uses XYZ order)
+                        // Calculate quaternion from Euler angles (intrinsic XYZ, matches Three.js)
                         const c1 = Math.cos(rot.x / 2);
                         const c2 = Math.cos(rot.y / 2);
                         const c3 = Math.cos(rot.z / 2);
@@ -1458,10 +1458,10 @@ async def read_root():
                         const s2 = Math.sin(rot.y / 2);
                         const s3 = Math.sin(rot.z / 2);
                         const quat = {
-                            x: s1 * c2 * c3 - c1 * s2 * s3,
-                            y: c1 * s2 * c3 + s1 * c2 * s3,
-                            z: c1 * c2 * s3 - s1 * s2 * c3,
-                            w: c1 * c2 * c3 + s1 * s2 * s3
+                            x: s1 * c2 * c3 + c1 * s2 * s3,
+                            y: c1 * s2 * c3 - s1 * c2 * s3,
+                            z: c1 * c2 * s3 + s1 * s2 * c3,
+                            w: c1 * c2 * c3 - s1 * s2 * s3
                         };
                         
                         return {
