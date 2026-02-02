@@ -1,6 +1,20 @@
 {
     "object_name": "inverted_u_brown",
     "fold_axes": {
+        "x": {
+            "fold": 1,
+            "quaternions": [
+                {
+                    "angle_deg": 0,
+                    "quaternion": {
+                        "x": 0,
+                        "y": 0,
+                        "z": 0,
+                        "w": 1
+                    }
+                }
+            ]
+        },
         "y": {
             "fold": 2,
             "quaternions": [
@@ -20,6 +34,20 @@
                         "y": 1,
                         "z": 0,
                         "w": 0
+                    }
+                }
+            ]
+        },
+        "z": {
+            "fold": 1,
+            "quaternions": [
+                {
+                    "angle_deg": 0,
+                    "quaternion": {
+                        "x": 0,
+                        "y": 0,
+                        "z": 0,
+                        "w": 1
                     }
                 }
             ]
