@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ArUco Grasp Annotator</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <link rel="stylesheet" href="/static/shared/css/base.css">
+    <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+    <div class="app-container">
+        <div class="sidebar sidebar-left">
+            <div class="controls-panel">
+                <h3>CAD Model</h3>
+                <input type="file" id="fileInput" accept=".stl,.obj,.ply,.off">
+                <button class="btn" onclick="loadModel()">Load CAD File</button>
+                <div id="modelStatus" class="status">No model loaded</div>
+            </div>
+
+            <div class="controls-panel">
+                <h3>ArUco Configuration</h3>
+                <div class="input-group">
+                    <label>Dictionary:</label>
+                    <select id="dictSelect">
+                        <option value="DICT_4X4_50">DICT_4X4_50</option>
+                        <option value="DICT_4X4_100">DICT_4X4_100</option>
+                        <option value="DICT_5X5_50">DICT_5X5_50</option>
+                        <option value="DICT_5X5_100">DICT_5X5_100</option>
+                        <option value="DICT_6X6_50">DICT_6X6_50</option>
+                        <option value="DICT_6X6_100">DICT_6X6_100</option>
+                    </select>
+                </div>
+                <div class="input-group">
+                    <label>Marker ID:</label>
+                    <input type="number" id="markerId" value="0" min="0" max="49">
+                </div>
+                <div class="input-group">
+                    <label>Size (m):</label>
+                    <input type="number" id="markerSize" value="0.021" step="0.001" min="0.001" max="1.0">
+                </div>
+                <div class="input-group">
+                    <label>Border Width (%):</label>
+                    <input type="number" id="borderWidth" value="0.05" step="0.01" min="0" max="0.5">
+                </div>
+            </div>
+
+            <div class="controls-panel">
+                <h3>Placement Modes</h3>
+                <button class="btn" onclick="enterPlacementMode('all-6')">All 6 Faces</button>
+                <button class="btn" onclick="enterPlacementMode('corner')">Corner Markers (4 per face)</button>
+                <button class="btn" onclick="enterPlacementMode('single-face')">Single Marker on Face</button>
+            </div>
+
+            <div class="controls-panel">
+                <h3>Placed Markers</h3>
+                <div id="markersList" class="marker-list"></div>
+                <button class="btn btn-secondary btn-small" onclick="removeSelectedMarker()">Remove Selected</button>
+                <button class="btn btn-secondary btn-small" onclick="clearAllMarkers()">Clear All</button>
+            </div>
+
+            <div class="controls-panel">
+                <h3>Export/Import</h3>
+                <button class="btn" onclick="exportAnnotations()">Export ArUco Annotations</button>
+                <button class="btn" onclick="exportWireframe()">Export Wireframe</button>
+                <button class="btn" onclick="exportPNG()">Export PNG (1920x1080)</button>
+                <input type="file" id="importFile" accept=".json" style="margin: 10px 0;">
+                <button class="btn" onclick="importAnnotations()">Import Annotations</button>
+            </div>
+        </div>
+
+        <div class="main-viewer">
+            <div class="viewer-container" id="viewer"></div>
+        </div>
+
+        <div class="sidebar sidebar-right">
+            <div class="controls-panel" id="cadObjectControls" style="display: none;">
+                <h3>CAD Object Transform</h3>
+
+                <h4 style="margin-top: 10px; margin-bottom: 5px; font-size: 14px; color: #555;">Position (m)</h4>
+                <div class="input-group">
+                    <label>X:</label>
+                    <input type="number" id="cadPosX" step="0.001" onchange="updateCADPose()">
+                </div>
+                <div class="input-group">
+                    <label>Y:</label>
+                    <input type="number" id="cadPosY" step="0.001" onchange="updateCADPose()">
+                </div>
+                <div class="input-group">
+                    <label>Z:</label>
+                    <input type="number" id="cadPosZ" step="0.001" onchange="updateCADPose()">
+                </div>
+
+                <h4 style="margin-top: 15px; margin-bottom: 5px; font-size: 14px; color: #555;">Rotation (degrees)</h4>
+                <div class="input-group">
+                    <label>Roll (X):</label>
+                    <input type="number" id="cadRotRoll" step="1" min="-180" max="180" onchange="updateCADPose()">
+                </div>
+                <div class="input-group">
+                    <label>Pitch (Y):</label>
+                    <input type="number" id="cadRotPitch" step="1" min="-180" max="180" onchange="updateCADPose()">
+                </div>
+                <div class="input-group">
+                    <label>Yaw (Z):</label>
+                    <input type="number" id="cadRotYaw" step="1" min="-180" max="180" onchange="updateCADPose()">
+                </div>
+
+                <button class="btn btn-secondary" onclick="resetCADPose()" style="margin-top: 10px;">Reset to Origin</button>
+
+                <h4 style="margin-top: 15px; margin-bottom: 5px; font-size: 14px; color: #555;">Current Pose</h4>
+                <div style="background: #f5f5f5; padding: 10px; border-radius: 4px; font-size: 12px; font-family: monospace;">
+                    <div><strong>Position:</strong> <span id="cadCurrentPos">(0, 0, 0)</span></div>
+                    <div style="margin-top: 5px;"><strong>RPY:</strong> <span id="cadCurrentRPY">(0, 0, 0)</span></div>
+                    <div style="margin-top: 5px;"><strong>Quaternion:</strong> <span id="cadCurrentQuat">(0, 0, 0, 1)</span></div>
+                    <div style="margin-top: 5px;"><strong>Axis-Angle:</strong> <span id="cadCurrentAxisAngle">[0, 0, 1] @ 0</span></div>
+                </div>
+            </div>
+
+            <div class="controls-panel" id="rotationControls" style="display: none;">
+                <h3>Rotate Selected Marker</h3>
+                <div class="input-group">
+                    <label>Roll (X-axis): <span id="rollValue">0</span></label>
+                    <input type="range" id="rotateRoll" value="0" step="5" min="-180" max="180"
+                           oninput="updateRotationDisplay('roll', this.value)" disabled
+                           title="Roll is part of base rotation and cannot be changed">
+                </div>
+                <div class="input-group">
+                    <label>Pitch (Y-axis): <span id="pitchValue">0</span></label>
+                    <input type="range" id="rotatePitch" value="0" step="5" min="-180" max="180"
+                           oninput="updateRotationDisplay('pitch', this.value)" disabled
+                           title="Pitch is part of base rotation and cannot be changed">
+                </div>
+                <div class="input-group">
+                    <label>Yaw (In-plane rotation): <span id="yawValue">0</span></label>
+                    <input type="range" id="rotateYaw" value="0" step="5" min="-180" max="180"
+                           oninput="updateRotationDisplay('yaw', this.value)"
+                           title="Rotate marker around its face normal">
+                </div>
+                <button class="btn" onclick="applyRotation()">Apply Rotation</button>
+                <button class="btn btn-secondary" onclick="resetRotationControls()">Reset</button>
+            </div>
+
+            <div class="controls-panel" id="translationControls" style="display: none;">
+                <h3>Translate Selected Marker (In-Plane)</h3>
+                <p style="font-size: 12px; color: #666; margin-bottom: 10px;">Move marker along X and Y axes in marker's local plane (in meters)</p>
+
+                <div class="input-group">
+                    <label>Step Size (m):</label>
+                    <input type="number" id="inplaneStepSize" value="0.0005" step="0.0001" min="0.0001" max="0.1">
+                </div>
+
+                <div style="margin: 15px 0;">
+                    <div style="text-align: center; margin-bottom: 10px;">
+                        <label style="display: block; margin-bottom: 5px; font-weight: bold;">Axis 1:</label>
+                        <button class="btn btn-small" onclick="moveInPlane('axis1_neg')" style="width: auto;">&#8592;</button>
+                        <button class="btn btn-small" onclick="moveInPlane('axis1_pos')" style="width: auto;">&#8594;</button>
+                    </div>
+                    <div style="text-align: center;">
+                        <label style="display: block; margin-bottom: 5px; font-weight: bold;">Axis 2:</label>
+                        <button class="btn btn-small" onclick="moveInPlane('axis2_neg')" style="width: auto;">&#8595;</button>
+                        <button class="btn btn-small" onclick="moveInPlane('axis2_pos')" style="width: auto;">&#8593;</button>
+                    </div>
+                </div>
+
+                <div class="input-group">
+                    <label>X (in-plane, m):</label>
+                    <input type="number" id="translateX" value="0" step="0.0001" min="-0.1" max="0.1"
+                           onchange="updateTranslationDisplay('x', this.value)">
+                </div>
+                <div class="input-group">
+                    <label>Y (in-plane, m):</label>
+                    <input type="number" id="translateY" value="0" step="0.0001" min="-0.1" max="0.1"
+                           onchange="updateTranslationDisplay('y', this.value)">
+                </div>
+                <button class="btn" onclick="applyTranslation()">Apply Translation</button>
+                <button class="btn btn-secondary" onclick="resetTranslationControls()">Reset</button>
+            </div>
+
+            <div class="controls-panel">
+                <h3>Swap Marker Positions</h3>
+                <p style="font-size: 12px; color: #666; margin-bottom: 10px;">Select a marker, then click "Assign to Marker 1" or "Assign to Marker 2"</p>
+                <div class="input-group">
+                    <label>Marker 1:</label>
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <span id="swapMarker1Display" style="flex: 1; padding: 8px; background: #f5f5f5; border-radius: 4px; min-height: 20px;">Not assigned</span>
+                        <button class="btn btn-small" onclick="assignToMarker1()" style="width: auto; padding: 8px 12px;">Assign Selected</button>
+                    </div>
+                </div>
+                <div class="input-group">
+                    <label>Marker 2:</label>
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <span id="swapMarker2Display" style="flex: 1; padding: 8px; background: #f5f5f5; border-radius: 4px; min-height: 20px;">Not assigned</span>
+                        <button class="btn btn-small" onclick="assignToMarker2()" style="width: auto; padding: 8px 12px;">Assign Selected</button>
+                    </div>
+                </div>
+                <button class="btn" onclick="swapMarkerPositions()">Swap Positions</button>
+                <button class="btn btn-secondary btn-small" onclick="clearSwapSelection()" style="margin-top: 5px;">Clear Selection</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

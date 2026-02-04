@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Grasp Candidates Visualizer</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+    <div class="app-container">
+        <div class="sidebar">
+            <div class="controls-panel">
+                <h3>Object Selection</h3>
+                <div class="form-group">
+                    <label for="objectSelect">Select Object:</label>
+                    <select id="objectSelect">
+                        <option value="">-- Select an object --</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="controls-panel">
+                <h3>Grasp Point Selection</h3>
+                <div class="form-group">
+                    <label for="graspSelect">Select Grasp Point:</label>
+                    <select id="graspSelect" disabled>
+                        <option value="">-- Select object first --</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="directionSelect">Select Direction:</label>
+                    <select id="directionSelect" disabled>
+                        <option value="">-- Select grasp point first --</option>
+                    </select>
+                </div>
+                <div class="form-group" id="executeButtonGroup" style="display: none;">
+                    <button id="executeButton" class="btn-execute" disabled>Execute Grasp</button>
+                </div>
+                <div class="form-group">
+                    <h3>Gripper Control</h3>
+                    <div class="gripper-buttons">
+                        <button id="openGripperButton" class="btn-gripper btn-gripper-open">Open Gripper</button>
+                        <button id="closeGripperButton" class="btn-gripper btn-gripper-close">Close Gripper</button>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <h3>Robot Control</h3>
+                    <div class="gripper-buttons">
+                        <button id="moveToSafeHeightButton" class="btn-gripper btn-gripper-open">Move to Safe Height</button>
+                        <button id="moveHomeButton" class="btn-gripper btn-gripper-close">Move Home</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="info-panel">
+                <h3>Grasp Point Info</h3>
+                <div id="graspInfo">
+                    <div class="info-item">
+                        <strong>No grasp point selected</strong>
+                        <span>Select a grasp point to view details</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="main-viewer">
+            <div id="viewer-container"></div>
+            <div class="status-bar" id="statusBar">Ready</div>
+        </div>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

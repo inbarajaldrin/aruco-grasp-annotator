@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enhanced 3D Assembly App v2.0</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+    <div class="app-container">
+        <div class="sidebar sidebar-left">
+            <div class="instructions">
+                <h4>Assembly Instructions</h4>
+                <ul>
+                    <li><strong>Load:</strong> Click "Load All Components" to load parts</li>
+                    <li><strong>Add:</strong> Click component names to add to scene</li>
+                    <li><strong>Select:</strong> Click objects in scene or object list</li>
+                    <li><strong>Control:</strong> Use precision controls for exact positioning</li>
+                    <li><strong>Camera:</strong> Mouse wheel zoom, middle-click pan, right-drag orbit</li>
+                    <li><strong>Shortcuts:</strong> Arrow keys move, Q/E rotate Y, Delete removes</li>
+                </ul>
+            </div>
+
+            <div class="controls-panel">
+                <h3>Components</h3>
+                <div class="assembly-controls">
+                    <button class="btn" onclick="loadAllComponents()">Load All Components</button>
+                    <button class="btn btn-secondary" onclick="clearScene()">Clear Scene</button>
+                </div>
+                <div id="componentList" class="component-list">
+                    <div class="loading">Click "Load All Components" to start</div>
+                </div>
+            </div>
+
+            <div class="controls-panel">
+                <h3>Assembly Management</h3>
+                <div class="assembly-controls">
+                    <input type="file" id="assemblyFileInput" accept=".json" style="display: none;" onchange="loadAssemblyFromFile(event)">
+                    <button class="btn" onclick="document.getElementById('assemblyFileInput').click()">Load Assembly</button>
+                    <button class="btn" onclick="exportAssembly()">Export Assembly</button>
+                </div>
+                <div style="font-size: 12px; color: #666; margin-top: 8px;">
+                    Load previously saved assembly configurations
+                </div>
+            </div>
+
+            <div class="controls-panel">
+                <h3>Grasp Points Visualization</h3>
+                <div class="assembly-controls">
+                    <input type="file" id="graspFileInput" accept=".json" style="display: none;" onchange="loadGraspPointsFromFile(event)">
+                    <button class="btn" onclick="loadGraspPointsAuto()">Load Grasp Points</button>
+                    <button class="btn btn-secondary" onclick="clearGraspPoints()">Clear Grasp Points</button>
+                </div>
+                <div id="graspInfo" style="font-size: 12px; color: #666; margin-top: 8px;">
+                    No grasp points loaded
+                </div>
+            </div>
+
+            <div id="statusMessages"></div>
+        </div>
+
+        <div class="main-viewer">
+            <div class="viewer-container" id="viewer"></div>
+            <div class="status-bar" id="statusBar">
+                <span>Ready - Load components to start assembling</span>
+                <div class="status-info">
+                    <span id="objectCount">Objects: 0</span>
+                    <span id="selectedInfo">Selected: None</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="sidebar sidebar-right">
+            <div id="selectedObjectInfo">
+                <div class="controls-panel">
+                    <h3>Object Transform</h3>
+                    <div class="loading" style="padding: 20px; text-align: center; color: #666;">
+                        Select an object to view and edit its transform
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Floating control panel -->
+    <div id="floatingControls" class="floating-controls">
+        <h4>Assembly Tools</h4>
+        <div class="controls-grid">
+            <button class="btn btn-small" onclick="toggleGrid()">Toggle Grid</button>
+            <button class="btn btn-small" onclick="resetCamera()">Reset Camera</button>
+            <button class="btn btn-small" onclick="checkCollisions()">Check Collisions</button>
+            <button class="btn btn-small" onclick="exportAssembly()">Export Assembly</button>
+            <button class="btn btn-small" onclick="document.getElementById('assemblyFileInput').click()">Load Assembly</button>
+            <button class="btn btn-small" onclick="exportPNG()">Export PNG</button>
+            <button class="btn btn-small" onclick="renderArUcoMarkers()">Render ArUco</button>
+            <button class="btn btn-small" onclick="unrenderArUcoMarkers()">Unrender ArUco</button>
+            <button class="btn btn-small btn-secondary" onclick="hideFloatingControls()">Close</button>
+        </div>
+    </div>
+
+    <button id="showControlsBtn" class="show-controls-btn" onclick="showFloatingControls()" title="Assembly Tools">&#9881;</button>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

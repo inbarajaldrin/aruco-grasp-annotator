@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Symmetry Exporter - 3D Visualization</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+    <div class="app-container">
+        <div class="sidebar">
+            <div class="instructions">
+                <h4>Symmetry Exporter Instructions</h4>
+                <ul>
+                    <li><strong>Load:</strong> Click "Load All Components" to load parts</li>
+                    <li><strong>Add:</strong> Click component names to add to scene</li>
+                    <li><strong>Select:</strong> Click objects in scene to select</li>
+                    <li><strong>Rotate:</strong> Use rotation controls (X, Y, Z) to rotate object</li>
+                    <li><strong>Quaternion:</strong> View quaternion values that update as you rotate</li>
+                    <li><strong>Camera:</strong> Mouse wheel zoom, middle-click pan, right-drag orbit</li>
+                    <li><strong>Shortcuts:</strong> Q/E rotate Y axis, Delete removes object</li>
+                </ul>
+            </div>
+
+            <div class="controls-panel">
+                <h3>Components</h3>
+                <div class="control-buttons-group">
+                    <button class="btn" onclick="loadAllComponents()">Load All Components</button>
+                    <button class="btn btn-secondary" onclick="clearScene()">Clear Scene</button>
+                </div>
+                <div id="componentList" class="component-list">
+                    <div class="loading">Click "Load All Components" to start</div>
+                </div>
+            </div>
+
+            <div id="selectedObjectInfo"></div>
+
+            <div id="foldSymmetryPanel" class="controls-panel" style="display: none;">
+                <h3>Fold Symmetry</h3>
+                <div style="font-size: 12px; color: #666; margin-bottom: 15px;">
+                    <strong>Understanding Fold:</strong><br>
+                    2-fold: Object looks identical after 180 degree rotation<br>
+                    4-fold: Object looks identical after 90, 180, 270, 360 degree rotation
+                </div>
+                <div class="control-group">
+                    <div class="control-row">
+                        <span class="control-label">X-axis folds:</span>
+                        <input type="number" id="foldXInput" class="control-input" min="0" step="1" value=""
+                               placeholder="Enter fold number" onchange="updateFoldValue('x', this.value)">
+                    </div>
+                    <div class="control-row">
+                        <span class="control-label">Y-axis folds:</span>
+                        <input type="number" id="foldYInput" class="control-input" min="0" step="1" value=""
+                               placeholder="Enter fold number" onchange="updateFoldValue('y', this.value)">
+                    </div>
+                    <div class="control-row">
+                        <span class="control-label">Z-axis folds:</span>
+                        <input type="number" id="foldZInput" class="control-input" min="0" step="1" value=""
+                               placeholder="Enter fold number" onchange="updateFoldValue('z', this.value)">
+                    </div>
+                </div>
+                <div class="control-buttons-group">
+                    <button class="btn btn-secondary" onclick="loadSymmetry()">Load</button>
+                    <button class="btn" onclick="exportSymmetry()">Export Symmetry</button>
+                </div>
+            </div>
+
+            <div id="statusMessages"></div>
+        </div>
+
+        <div class="main-viewer">
+            <div class="viewer-container" id="viewer"></div>
+            <div class="status-bar" id="statusBar">
+                <span>Ready - Load components to start</span>
+                <div class="status-info">
+                    <span id="objectCount">Objects: 0</span>
+                    <span id="selectedInfo">Selected: None</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Floating control panel -->
+    <div id="floatingControls" class="floating-controls">
+        <h4>View Tools</h4>
+        <div class="controls-grid">
+            <button class="btn btn-small" onclick="toggleGrid()">Toggle Grid</button>
+            <button class="btn btn-small" onclick="resetCamera()">Reset Camera</button>
+            <button class="btn btn-small btn-secondary" onclick="hideFloatingControls()">Close</button>
+        </div>
+    </div>
+
+    <button id="showControlsBtn" class="show-controls-btn" onclick="showFloatingControls()" title="View Tools">&#9881;</button>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
