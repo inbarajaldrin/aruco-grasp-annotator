@@ -3,6 +3,7 @@
   "components": [
     {
       "name": "base3",
+      "type": "fixture",
       "position": {
         "x": 0.0,
         "y": 0.0,
@@ -24,6 +25,7 @@
     },
     {
       "name": "fork_orange",
+      "type": "part",
       "position": {
         "x": 0.0,
         "y": 0.036,
@@ -45,6 +47,7 @@
     },
     {
       "name": "fork_yellow",
+      "type": "part",
       "position": {
         "x": 0.0,
         "y": -0.036,
@@ -66,6 +69,7 @@
     },
     {
       "name": "line_brown",
+      "type": "part",
       "position": {
         "x": 0.0255,
         "y": 0.0,
@@ -87,6 +91,7 @@
     },
     {
       "name": "line_red",
+      "type": "part",
       "position": {
         "x": -0.0255,
         "y": 0.0,

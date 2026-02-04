@@ -3,6 +3,7 @@
   "components": [
     {
       "name": "base1",
+      "type": "fixture",
       "position": {
         "x": 0,
         "y": 0,
@@ -24,6 +25,7 @@
     },
     {
       "name": "inverted_u_yellow",
+      "type": "part",
       "position": {
         "x": 0,
         "y": 0,
@@ -45,6 +47,7 @@
     },
     {
       "name": "u_brown",
+      "type": "part",
       "position": {
         "x": 0,
         "y": -0.0475,
@@ -66,6 +69,7 @@
     },
     {
       "name": "u_orange",
+      "type": "part",
       "position": {
         "x": 0,
         "y": 0.0485,
@@ -87,6 +91,7 @@
     },
     {
       "name": "line_green",
+      "type": "part",
       "position": {
         "x": 0,
         "y": 0,

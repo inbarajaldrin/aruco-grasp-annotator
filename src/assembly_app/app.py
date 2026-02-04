@@ -930,14 +930,16 @@ async def read_root():
                 
                 // Create mesh
                 const wireframe = new THREE.LineSegments(lineGeometry, material);
-                wireframe.userData = { 
-                    name: componentName, 
+                wireframe.userData = {
+                    name: componentName,
                     type: 'component',
                     displayName: component.display_name,
                     originalColor: getComponentColor(componentName),
-                    id: generateId()
+                    id: generateId(),
+                    assemblyType: 'part',  // Default type: fixture, part, or peg
+                    pegAxis: 'y'           // Axis for peg type (x, y, or z)
                 };
-                
+
                 // Position at origin (0, 0, 0)
                 wireframe.position.set(0, 0, 0);
                 
@@ -1175,15 +1177,37 @@ async def read_root():
                     w: c1 * c2 * c3 - s1 * s2 * s3
                 };
 
+                const assemblyType = obj.userData.assemblyType || 'part';
+                const pegAxis = obj.userData.pegAxis || 'y';
+
                 container.innerHTML = `
                     <div class="controls-panel">
                         <h3>🎛️ Object Transform</h3>
-                        
+
                         <div class="selected-object" style="margin-bottom: 15px; padding: 10px; background: #f5f5f5; border-radius: 4px;">
                             <h4 style="margin: 0 0 5px 0; color: #2c3e50;">${obj.userData.displayName || obj.userData.name}</h4>
                             <p style="margin: 0; font-size: 12px; color: #666;">Type: ${obj.userData.type}</p>
                         </div>
-                        
+
+                        <h4 style="margin-top: 15px; margin-bottom: 8px; font-size: 13px; color: #555;">Assembly Type</h4>
+                        <div class="transform-row" style="margin-bottom: 10px;">
+                            <select id="assemblyTypeSelect" class="control-input" style="flex: 1;" onchange="setAssemblyType(this.value)">
+                                <option value="fixture" ${assemblyType === 'fixture' ? 'selected' : ''}>Fixture</option>
+                                <option value="part" ${assemblyType === 'part' ? 'selected' : ''}>Part</option>
+                                <option value="peg" ${assemblyType === 'peg' ? 'selected' : ''}>Peg</option>
+                            </select>
+                        </div>
+                        ${assemblyType === 'peg' ? `
+                        <div class="transform-row" style="margin-bottom: 10px;">
+                            <label>Axis:</label>
+                            <select id="pegAxisSelect" class="control-input" style="flex: 1;" onchange="setPegAxis(this.value)">
+                                <option value="x" ${pegAxis === 'x' ? 'selected' : ''}>X</option>
+                                <option value="y" ${pegAxis === 'y' ? 'selected' : ''}>Y</option>
+                                <option value="z" ${pegAxis === 'z' ? 'selected' : ''}>Z</option>
+                            </select>
+                        </div>
+                        ` : ''}
+
                         <h4 style="margin-top: 15px; margin-bottom: 8px; font-size: 13px; color: #555;">Position (m)</h4>
                         <div class="transform-row">
                             <label>X:</label>
@@ -1317,7 +1341,23 @@ async def read_root():
                 updateStatus(`Rotated ${selectedObject.userData.displayName} ${axis.toUpperCase()}: ${(selectedObject.rotation[axis] * 180 / Math.PI).toFixed(1)}°`);
             }
             window.rotateObject = rotateObject;
-            
+
+            function setAssemblyType(value) {
+                if (!selectedObject) return;
+                selectedObject.userData.assemblyType = value;
+                updateSelectedObjectInfo();
+                updateStatus(`Set ${selectedObject.userData.displayName} type: ${value}`);
+            }
+            window.setAssemblyType = setAssemblyType;
+
+            function setPegAxis(value) {
+                if (!selectedObject) return;
+                selectedObject.userData.pegAxis = value;
+                updateSelectedObjectInfo();
+                updateStatus(`Set ${selectedObject.userData.displayName} peg axis: ${value}`);
+            }
+            window.setPegAxis = setPegAxis;
+
             function updateCurrentPoseDisplay() {
                 if (!selectedObject) return;
                 
@@ -1464,8 +1504,10 @@ async def read_root():
                             w: c1 * c2 * c3 - s1 * s2 * s3
                         };
                         
-                        return {
+                        const assemblyType = obj.userData.assemblyType || 'part';
+                        const result = {
                             name: obj.userData.name,
+                            type: assemblyType,
                             position: {
                                 x: obj.position.x,
                                 y: obj.position.y,
@@ -1485,6 +1527,11 @@ async def read_root():
                                 }
                             }
                         };
+                        // Only include axis for peg type
+                        if (assemblyType === 'peg') {
+                            result.axis = obj.userData.pegAxis || 'y';
+                        }
+                        return result;
                     });
                 
                 const assembly = {
@@ -2039,14 +2086,16 @@ async def read_root():
                 
                 // Create mesh
                 const wireframe = new THREE.LineSegments(lineGeometry, material);
-                wireframe.userData = { 
-                    name: componentName, 
+                wireframe.userData = {
+                    name: componentName,
                     type: 'component',
                     displayName: component.display_name,
                     originalColor: getComponentColor(componentName),
-                    id: generateId()
+                    id: generateId(),
+                    assemblyType: componentData.type || 'part',  // Restore type from assembly
+                    pegAxis: componentData.axis || 'y'           // Restore axis from assembly
                 };
-                
+
                 // Restore position from assembly data
                 wireframe.position.set(
                     componentData.position.x,
