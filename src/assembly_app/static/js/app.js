@@ -260,7 +260,8 @@ function addComponentToScene(componentName) {
         displayName: component.display_name,
         originalColor: getComponentColor(componentName),
         id: generateId(),
-        assemblyType: 'part',
+        assemblyType: 'object',
+        assemblySubtype: 'block',
         pegAxis: 'y'
     };
 
@@ -486,8 +487,9 @@ function updateSelectedObjectInfo() {
     const pos = obj.position;
     const rot = obj.rotation;
     const quat = calculateQuaternion(rot);
-    const assemblyType = obj.userData.assemblyType || 'part';
-    const pegAxis = obj.userData.pegAxis || 'y';
+    const assemblyType = obj.userData.assemblyType;
+    const assemblySubtype = obj.userData.assemblySubtype;
+    const pegAxis = obj.userData.pegAxis;
 
     container.innerHTML = `
         <div class="controls-panel">
@@ -501,12 +503,21 @@ function updateSelectedObjectInfo() {
             <h4 style="margin-top: 15px; margin-bottom: 8px; font-size: 13px; color: #555;">Assembly Type</h4>
             <div class="transform-row" style="margin-bottom: 10px;">
                 <select id="assemblyTypeSelect" class="control-input" style="flex: 1;" onchange="setAssemblyType(this.value)">
-                    <option value="fixture" ${assemblyType === 'fixture' ? 'selected' : ''}>Fixture</option>
-                    <option value="part" ${assemblyType === 'part' ? 'selected' : ''}>Part</option>
-                    <option value="peg" ${assemblyType === 'peg' ? 'selected' : ''}>Peg</option>
+                    <option value="board" ${assemblyType === 'board' ? 'selected' : ''}>Board</option>
+                    <option value="object" ${assemblyType === 'object' ? 'selected' : ''}>Object</option>
                 </select>
             </div>
-            ${assemblyType === 'peg' ? `
+            ${assemblyType === 'object' ? `
+            <h4 style="margin-top: 10px; margin-bottom: 8px; font-size: 13px; color: #555;">Subtype</h4>
+            <div class="transform-row" style="margin-bottom: 10px;">
+                <select id="assemblySubtypeSelect" class="control-input" style="flex: 1;" onchange="setAssemblySubtype(this.value)">
+                    <option value="block" ${assemblySubtype === 'block' ? 'selected' : ''}>Block</option>
+                    <option value="socket" ${assemblySubtype === 'socket' ? 'selected' : ''}>Socket</option>
+                    <option value="peg" ${assemblySubtype === 'peg' ? 'selected' : ''}>Peg</option>
+                </select>
+            </div>
+            ` : ''}
+            ${assemblyType === 'object' && assemblySubtype === 'peg' ? `
             <div class="transform-row" style="margin-bottom: 10px;">
                 <label>Axis:</label>
                 <select id="pegAxisSelect" class="control-input" style="flex: 1;" onchange="setPegAxis(this.value)">
@@ -653,10 +664,23 @@ window.rotateObject = rotateObject;
 function setAssemblyType(value) {
     if (!selectedObject) return;
     selectedObject.userData.assemblyType = value;
+    if (value === 'board') {
+        selectedObject.userData.assemblySubtype = null;
+    } else if (!selectedObject.userData.assemblySubtype) {
+        selectedObject.userData.assemblySubtype = 'block';
+    }
     updateSelectedObjectInfo();
     updateStatus(`Set ${selectedObject.userData.displayName} type: ${value}`);
 }
 window.setAssemblyType = setAssemblyType;
+
+function setAssemblySubtype(value) {
+    if (!selectedObject) return;
+    selectedObject.userData.assemblySubtype = value;
+    updateSelectedObjectInfo();
+    updateStatus(`Set ${selectedObject.userData.displayName} subtype: ${value}`);
+}
+window.setAssemblySubtype = setAssemblySubtype;
 
 function setPegAxis(value) {
     if (!selectedObject) return;
@@ -777,7 +801,8 @@ async function exportAssembly() {
         .map(obj => {
             const rot = obj.rotation;
             const quat = calculateQuaternion(rot);
-            const assemblyType = obj.userData.assemblyType || 'part';
+            const assemblyType = obj.userData.assemblyType;
+            const assemblySubtype = obj.userData.assemblySubtype;
             const result = {
                 name: obj.userData.name,
                 type: assemblyType,
@@ -800,8 +825,11 @@ async function exportAssembly() {
                     }
                 }
             };
-            if (assemblyType === 'peg') {
-                result.axis = obj.userData.pegAxis || 'y';
+            if (assemblyType === 'object') {
+                result.subtype = assemblySubtype;
+                if (assemblySubtype === 'peg') {
+                    result.axis = obj.userData.pegAxis || 'y';
+                }
             }
             return result;
         });
@@ -1299,7 +1327,8 @@ async function restoreComponentFromAssembly(componentData) {
         displayName: component.display_name,
         originalColor: getComponentColor(componentName),
         id: generateId(),
-        assemblyType: componentData.type || 'part',
+        assemblyType: componentData.type,
+        assemblySubtype: componentData.subtype || null,
         pegAxis: componentData.axis || 'y'
     };
 

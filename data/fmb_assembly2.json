@@ -3,7 +3,7 @@
   "components": [
     {
       "name": "base2",
-      "type": "fixture",
+      "type": "board",
       "position": {
         "x": 0,
         "y": 0,
@@ -25,7 +25,8 @@
     },
     {
       "name": "hex_blue",
-      "type": "peg",
+      "type": "object",
+      "subtype": "peg",
       "axis": "y",
       "position": {
         "x": 0.0526,
@@ -48,7 +49,8 @@
     },
     {
       "name": "hex_red",
-      "type": "peg",
+      "type": "object",
+      "subtype": "peg",
       "axis": "y",
       "position": {
         "x": -0.0526,
@@ -71,7 +73,8 @@
     },
     {
       "name": "inverted_u_brown",
-      "type": "part",
+      "type": "object",
+      "subtype": "socket",
       "position": {
         "x": 0,
         "y": 0,
@@ -93,7 +96,8 @@
     },
     {
       "name": "u_green",
-      "type": "part",
+      "type": "object",
+      "subtype": "block",
       "position": {
         "x": 0,
         "y": 0,
