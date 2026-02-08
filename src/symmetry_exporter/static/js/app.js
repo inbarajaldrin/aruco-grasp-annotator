@@ -868,22 +868,14 @@ async function exportSymmetry() {
     }
 
     const foldValues = objectFoldValues[currentObjectName] || {};
-    const hasAnyFold = Object.keys(foldValues).length > 0;
-
-    if (!hasAnyFold) {
-        showMessage("Please set fold values for at least one axis first", "error");
-        return;
-    }
 
     const foldAxesDetailed = {};
     ['x','y','z'].forEach(axis => {
-        const f = foldValues[axis];
-        if (f && f > 0) {
-            foldAxesDetailed[axis] = {
-                fold: f,
-                quaternions: computeAxisFoldQuaternions(axis, f)
-            };
-        }
+        const f = (foldValues[axis] && foldValues[axis] > 0) ? foldValues[axis] : 1;
+        foldAxesDetailed[axis] = {
+            fold: f,
+            quaternions: computeAxisFoldQuaternions(axis, f)
+        };
     });
 
     const exportData = {

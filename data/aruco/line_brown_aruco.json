@@ -1,5 +1,5 @@
 {
-  "exported_at": "2025-11-27T19:53:56.474546",
+  "exported_at": "2026-02-07T18:59:42.680073",
   "model_file": "line_brown.obj",
   "total_markers": 6,
   "aruco_dictionary": "DICT_4X4_50",
@@ -35,10 +35,10 @@
   },
   "markers": [
     {
-      "aruco_id": 18,
+      "aruco_id": 19,
       "face_type": "right",
       "surface_normal": [
-        0.9999999900000002,
+        0.99999999,
         0.0,
         0.0
       ],
@@ -51,21 +51,21 @@
         "rotation": {
           "roll": 0.0,
           "pitch": 1.5707963267948966,
-          "yaw": 3.141592653589793,
+          "yaw": 6.283185307179586,
           "quaternion": {
-            "x": 0.7071067756329439,
-            "y": 4.329780247171452e-17,
-            "z": 0.7071067867401513,
-            "w": 4.3297803151834814e-17
+            "x": 8.659560494342904e-17,
+            "y": -0.7071067756329439,
+            "z": 8.659560630366963e-17,
+            "w": -0.7071067867401513
           }
         }
       }
     },
     {
-      "aruco_id": 19,
+      "aruco_id": 18,
       "face_type": "left",
       "surface_normal": [
-        -0.9999999900000002,
+        -0.99999999,
         0.0,
         0.0
       ],
@@ -93,7 +93,7 @@
       "face_type": "back",
       "surface_normal": [
         0.0,
-        -0.9999999900000002,
+        -0.99999999,
         0.0
       ],
       "T_object_to_marker": {
@@ -120,7 +120,7 @@
       "face_type": "front",
       "surface_normal": [
         0.0,
-        0.9999999900000002,
+        0.99999999,
         0.0
       ],
       "T_object_to_marker": {
@@ -132,12 +132,12 @@
         "rotation": {
           "roll": -1.5707963267948966,
           "pitch": 0.0,
-          "yaw": 3.141592653589793,
+          "yaw": 3.1415926535897927,
           "quaternion": {
-            "x": -4.329780247171452e-17,
+            "x": -2.0030704710694432e-16,
             "y": 0.7071067756329439,
             "z": 0.7071067867401513,
-            "w": 4.3297803151834814e-17
+            "w": 2.0030705025336007e-16
           }
         }
       }
@@ -148,7 +148,7 @@
       "surface_normal": [
         0.0,
         0.0,
-        -0.9999999900000002
+        -0.99999999
       ],
       "T_object_to_marker": {
         "position": {
@@ -175,7 +175,7 @@
       "surface_normal": [
         0.0,
         0.0,
-        0.9999999900000002
+        0.99999999
       ],
       "T_object_to_marker": {
         "position": {
@@ -186,16 +186,16 @@
         "rotation": {
           "roll": 0.0,
           "pitch": 0.0,
-          "yaw": 3.141592653589793,
+          "yaw": 3.1415926535897936,
           "quaternion": {
             "x": 0.0,
             "y": 0.0,
             "z": 1.0,
-            "w": 6.123233995736766e-17
+            "w": -1.6081226496766364e-16
           }
         }
       }
     }
   ],
-  "notes": "T_object_to_marker is the complete transform from object center to marker, including full rotation (base + in-plane)."
+  "notes": "T_object_to_marker is the complete transform from object center to marker."
 }
