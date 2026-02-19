@@ -470,9 +470,9 @@ class GraspFilter:
                 valid_x_open, _, _ = self.check_x_grasp(region, regions, pixel_to_mm, self.half_open_mm)
 
                 if valid_x_half:
-                    valid_x = ['half-open', 'open']
-                elif valid_x_open:
-                    valid_x = ['open']
+                    valid_x.append('half-open')
+                if valid_x_open:
+                    valid_x.append('open')
 
             # Check Y-axis grasps if enabled
             valid_y = []
@@ -481,9 +481,9 @@ class GraspFilter:
                 valid_y_open, _, _ = self.check_y_grasp(region, regions, pixel_to_mm, self.half_open_mm)
 
                 if valid_y_half:
-                    valid_y = ['half-open', 'open']
-                elif valid_y_open:
-                    valid_y = ['open']
+                    valid_y.append('half-open')
+                if valid_y_open:
+                    valid_y.append('open')
 
             results.append({
                 'grasp_id': region_id,

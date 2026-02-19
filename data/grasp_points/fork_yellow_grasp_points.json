@@ -7,18 +7,18 @@
   "coordinate_frame": "cad_center",
   "filter_applied": true,
   "filter_params": {
-    "gripper_max_width_mm": 70,
-    "gripper_half_open_width_mm": 30,
-    "gripper_tip_thickness_mm": 20,
+    "gripper_max_width_mm": 100.0,
+    "gripper_half_open_width_mm": 30.0,
+    "gripper_tip_thickness_mm": 20.0,
     "max_gap_px": 20,
-    "symmetry_tolerance_mm": 10
+    "symmetry_tolerance_mm": 10.0
   },
   "grasp_points": [
     {
       "id": 1,
       "position": {
-        "x": -0.050051775420438475,
-        "y": 0.017803651659619054,
+        "x": -0.05005177542043847,
+        "y": 0.01780365165961908,
         "z": 0.0
       },
       "type": "center_point",
@@ -29,8 +29,7 @@
       },
       "grasp_validity": {
         "x_axis": [
-          "half-open",
-          "open"
+          "half-open"
         ],
         "y_axis": []
       }
@@ -38,8 +37,8 @@
     {
       "id": 2,
       "position": {
-        "x": -0.026940620058517894,
-        "y": -0.006785542708005754,
+        "x": -0.026940620058517897,
+        "y": -0.006852726299174113,
         "z": 0.0
       },
       "type": "center_point",
@@ -59,7 +58,7 @@
     {
       "id": 3,
       "position": {
-        "x": -6.718359116837598e-05,
+        "x": -6.718359116837251e-05,
         "y": 0.01780365165961906,
         "z": 0.0
       },
@@ -71,8 +70,7 @@
       },
       "grasp_validity": {
         "x_axis": [
-          "half-open",
-          "open"
+          "half-open"
         ],
         "y_axis": []
       }
@@ -80,8 +78,8 @@
     {
       "id": 4,
       "position": {
-        "x": -6.718359116837079e-05,
-        "y": -0.024589194367624807,
+        "x": -6.718359116838616e-05,
+        "y": -0.024589194367624804,
         "z": 0.0
       },
       "type": "center_point",
@@ -101,8 +99,8 @@
     {
       "id": 5,
       "position": {
-        "x": 0.026806252876181148,
-        "y": -0.006785542708005747,
+        "x": 0.026806252876181144,
+        "y": -0.006852726299174131,
         "z": 0.0
       },
       "type": "center_point",
@@ -122,8 +120,8 @@
     {
       "id": 6,
       "position": {
-        "x": 0.049917408238101736,
-        "y": 0.017803651659619068,
+        "x": 0.04991740823810175,
+        "y": 0.017803651659619047,
         "z": 0.0
       },
       "type": "center_point",
@@ -134,8 +132,7 @@
       },
       "grasp_validity": {
         "x_axis": [
-          "half-open",
-          "open"
+          "half-open"
         ],
         "y_axis": []
       }
@@ -143,7 +140,7 @@
   ],
   "markers": [
     {
-      "aruco_id": 6,
+      "aruco_id": 7,
       "size": 0.021,
       "pose_absolute": {
         "position": {
@@ -159,7 +156,7 @@
       }
     },
     {
-      "aruco_id": 7,
+      "aruco_id": 6,
       "size": 0.021,
       "pose_absolute": {
         "position": {
@@ -202,7 +199,7 @@
         "rotation": {
           "roll": -1.5707963267948966,
           "pitch": 0.0,
-          "yaw": 3.141592653589793
+          "yaw": 3.1415926535897927
         }
       }
     },
@@ -234,7 +231,7 @@
         "rotation": {
           "roll": 0.0,
           "pitch": 0.0,
-          "yaw": 3.141592653589793
+          "yaw": 3.1415926535897936
         }
       }
     }
