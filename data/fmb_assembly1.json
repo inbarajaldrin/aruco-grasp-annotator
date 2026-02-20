@@ -4,6 +4,7 @@
     {
       "name": "base1",
       "type": "board",
+      "assembly_order": 1,
       "position": {
         "x": 0,
         "y": 0,
@@ -27,6 +28,7 @@
       "name": "inverted_u_yellow",
       "type": "object",
       "subtype": "block",
+      "assembly_order": 5,
       "position": {
         "x": 0,
         "y": 0,
@@ -50,6 +52,7 @@
       "name": "u_brown",
       "type": "object",
       "subtype": "block",
+      "assembly_order": 2,
       "position": {
         "x": 0,
         "y": -0.0475,
@@ -73,6 +76,7 @@
       "name": "u_orange",
       "type": "object",
       "subtype": "block",
+      "assembly_order": 3,
       "position": {
         "x": 0,
         "y": 0.0485,
@@ -96,6 +100,7 @@
       "name": "line_green",
       "type": "object",
       "subtype": "block",
+      "assembly_order": 4,
       "position": {
         "x": 0,
         "y": 0,

@@ -262,13 +262,17 @@ function addComponentToScene(componentName) {
         id: generateId(),
         assemblyType: 'object',
         assemblySubtype: 'block',
-        pegAxis: 'y'
+        pegAxis: 'y',
+        assemblyOrder: null
     };
 
     wireframe.position.set(0, 0, 0);
 
     scene.add(wireframe);
     sceneObjects.push(wireframe);
+
+    // Auto-assign assembly order
+    wireframe.userData.assemblyOrder = getNextAssemblyOrder();
 
     if (component.aruco && component.aruco.markers) {
         component.aruco.markers.forEach((marker, index) => {
@@ -365,17 +369,28 @@ function getSceneObjectsListHTML() {
 
     let html = '<div class="scene-objects" style="max-height: 200px; overflow-y: auto; border: 1px solid #ddd; border-radius: 4px; background: white;">';
 
+    componentObjects.sort((a, b) => {
+        const orderA = a.userData.assemblyOrder != null ? a.userData.assemblyOrder : Infinity;
+        const orderB = b.userData.assemblyOrder != null ? b.userData.assemblyOrder : Infinity;
+        return orderA - orderB;
+    });
+
     componentObjects.forEach(obj => {
         const isSelected = obj === selectedObject;
         const isVisible = obj.visible !== false;
         const eyeIcon = isVisible ? '👁️' : '👁️‍🗨️';
         const eyeStyle = isVisible ? 'opacity: 1;' : 'opacity: 0.4;';
+        const order = obj.userData.assemblyOrder;
+        const orderBadge = order != null
+            ? `<span style="display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; border-radius: 10px; background: #3498db; color: white; font-size: 11px; font-weight: 600; padding: 0 4px;">${order}</span>`
+            : `<span style="display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; border-radius: 10px; background: #bdc3c7; color: white; font-size: 11px; padding: 0 4px;">-</span>`;
         html += `
             <div class="scene-object-item ${isSelected ? 'selected' : ''}"
                  onclick="selectObjectFromTransformPanel(this)"
                  data-object-id="${obj.userData.id}"
                  style="cursor: pointer; padding: 8px 12px; border-bottom: 1px solid #eee; transition: all 0.2s; display: flex; align-items: center; justify-content: space-between; ${isSelected ? 'background: rgba(52, 152, 219, 0.1); border-left: 3px solid #3498db;' : ''}">
                 <div style="display: flex; align-items: center; gap: 8px; flex: 1;">
+                    ${orderBadge}
                     <span class="object-name" style="font-weight: 500; color: #2c3e50;">${obj.userData.displayName || obj.userData.name}</span>
                     <span class="object-type" style="font-size: 11px; padding: 2px 6px; border-radius: 8px; background: #ecf0f1; color: #7f8c8d;">${obj.userData.type}</span>
                 </div>
@@ -490,6 +505,7 @@ function updateSelectedObjectInfo() {
     const assemblyType = obj.userData.assemblyType;
     const assemblySubtype = obj.userData.assemblySubtype;
     const pegAxis = obj.userData.pegAxis;
+    const assemblyOrder = obj.userData.assemblyOrder;
 
     container.innerHTML = `
         <div class="controls-panel">
@@ -527,6 +543,13 @@ function updateSelectedObjectInfo() {
                 </select>
             </div>
             ` : ''}
+
+            <h4 style="margin-top: 10px; margin-bottom: 8px; font-size: 13px; color: #555;">Assembly Order</h4>
+            <div class="transform-row" style="margin-bottom: 10px;">
+                <input type="number" id="assemblyOrderInput" class="control-input" style="flex: 1;"
+                       min="1" step="1" value="${assemblyOrder != null ? assemblyOrder : ''}"
+                       onchange="setAssemblyOrder(parseInt(this.value))">
+            </div>
 
             <h4 style="margin-top: 15px; margin-bottom: 8px; font-size: 13px; color: #555;">Position (m)</h4>
             <div class="transform-row">
@@ -690,6 +713,39 @@ function setPegAxis(value) {
 }
 window.setPegAxis = setPegAxis;
 
+function setAssemblyOrder(value) {
+    if (!selectedObject) return;
+    if (isNaN(value) || value < 1) {
+        showMessage("Assembly order must be a positive integer", "error");
+        updateSelectedObjectInfo();
+        return;
+    }
+    // Check for duplicates
+    const duplicate = sceneObjects.find(obj =>
+        obj !== selectedObject &&
+        obj.userData && obj.userData.type === 'component' &&
+        obj.userData.assemblyOrder === value
+    );
+    if (duplicate) {
+        showMessage(`Warning: Order ${value} is already used by ${duplicate.userData.displayName || duplicate.userData.name}`, "error");
+    }
+    selectedObject.userData.assemblyOrder = value;
+    updateSelectedObjectInfo();
+    updateSceneObjectsList();
+    updateStatus(`Set ${selectedObject.userData.displayName} assembly order: ${value}`);
+}
+window.setAssemblyOrder = setAssemblyOrder;
+
+function getNextAssemblyOrder() {
+    let maxOrder = 0;
+    sceneObjects.forEach(obj => {
+        if (obj.userData && obj.userData.type === 'component' && obj.userData.assemblyOrder != null) {
+            maxOrder = Math.max(maxOrder, obj.userData.assemblyOrder);
+        }
+    });
+    return maxOrder + 1;
+}
+
 function updateCurrentPoseDisplay() {
     if (!selectedObject) return;
 
@@ -831,7 +887,15 @@ async function exportAssembly() {
                     result.axis = obj.userData.pegAxis || 'y';
                 }
             }
+            if (obj.userData.assemblyOrder != null) {
+                result.assembly_order = obj.userData.assemblyOrder;
+            }
             return result;
+        })
+        .sort((a, b) => {
+            const orderA = a.assembly_order != null ? a.assembly_order : Infinity;
+            const orderB = b.assembly_order != null ? b.assembly_order : Infinity;
+            return orderA - orderB;
         });
 
     const assembly = {
@@ -1329,7 +1393,8 @@ async function restoreComponentFromAssembly(componentData) {
         id: generateId(),
         assemblyType: componentData.type,
         assemblySubtype: componentData.subtype || null,
-        pegAxis: componentData.axis || 'y'
+        pegAxis: componentData.axis || 'y',
+        assemblyOrder: componentData.assembly_order != null ? componentData.assembly_order : null
     };
 
     wireframe.position.set(
