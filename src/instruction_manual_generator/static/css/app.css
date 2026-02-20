@@ -1,0 +1,508 @@
+/* Instruction Manual Builder - App Styles */
+
+/* Override base body for light theme */
+body {
+    background: #f0f2f5;
+}
+
+/* Override viewer for white background (technical drawing look) */
+.viewer-container {
+    background: #ffffff !important;
+    border: 1px solid #e0e0e0;
+}
+
+/* Override sidebar for light theme */
+.sidebar {
+    width: 320px;
+    background: #ffffff;
+}
+
+/* Step cards list */
+.steps-list {
+    max-height: 400px;
+    overflow-y: auto;
+    margin-top: 10px;
+    border: 1px solid #e0e0e0;
+    border-radius: 6px;
+    background: #fafafa;
+}
+
+.step-card {
+    padding: 10px 12px;
+    border-bottom: 1px solid #eee;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: background 0.15s;
+    user-select: none;
+}
+
+.step-card:last-child {
+    border-bottom: none;
+}
+
+.step-card:hover {
+    background: #f0f4f8;
+}
+
+.step-card.active {
+    background: #e8f0fe;
+    border-left: 3px solid #2c3e50;
+}
+
+.step-number {
+    font-weight: 700;
+    font-size: 13px;
+    color: #2c3e50;
+    min-width: 18px;
+    flex-shrink: 0;
+}
+
+.step-desc-preview {
+    flex: 1;
+    font-size: 12px;
+    color: #555;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.step-card-actions {
+    display: flex;
+    gap: 2px;
+    flex-shrink: 0;
+}
+
+.step-card-actions button {
+    background: none;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+    width: 24px;
+    height: 24px;
+    font-size: 11px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #666;
+    transition: all 0.15s;
+    padding: 0;
+}
+
+.step-card-actions button:hover {
+    background: #e0e0e0;
+    color: #333;
+}
+
+.step-card-actions button.delete-btn:hover {
+    background: #ffebee;
+    color: #c62828;
+    border-color: #ef9a9a;
+}
+
+/* Step size selector */
+.step-size-select {
+    padding: 2px 4px;
+    font-size: 11px;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+    background: white;
+    color: #555;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+/* Step editor */
+.step-editor-section {
+    margin-bottom: 16px;
+}
+
+.step-editor-section h4 {
+    font-size: 13px;
+    color: #2c3e50;
+    margin-bottom: 8px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid #eee;
+}
+
+.step-description-input {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 13px;
+    font-family: inherit;
+    resize: vertical;
+    min-height: 60px;
+}
+
+.step-description-input:focus {
+    outline: none;
+    border-color: #2c3e50;
+    box-shadow: 0 0 0 2px rgba(44, 62, 80, 0.15);
+}
+
+/* Component visibility rows */
+.component-visibility-list {
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.component-vis-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 0;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+.component-vis-row:last-child {
+    border-bottom: none;
+}
+
+.component-vis-row input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+    accent-color: #2c3e50;
+    flex-shrink: 0;
+}
+
+.component-vis-name {
+    font-size: 12px;
+    color: #333;
+    min-width: 80px;
+    flex-shrink: 0;
+}
+
+.component-vis-name.hidden {
+    color: #bbb;
+    text-decoration: line-through;
+}
+
+.component-vis-row input[type="range"] {
+    flex: 1;
+    min-width: 60px;
+}
+
+/* XYZ offset / rotation controls grid */
+.component-offset-row {
+    display: grid;
+    grid-template-columns: 26px 14px 20px 1fr 20px;
+    grid-template-rows: auto auto auto;
+    gap: 1px 2px;
+    padding: 2px 0 2px 24px;
+    align-items: center;
+}
+
+.component-offset-row + .component-offset-row {
+    padding-bottom: 8px;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+.offset-row-label {
+    font-size: 9px;
+    font-weight: 700;
+    color: #aaa;
+    text-transform: uppercase;
+    grid-column: 1;
+    grid-row: 1 / span 3;
+    align-self: center;
+}
+
+.offset-axis-group {
+    display: contents;
+}
+
+.offset-axis-label {
+    font-size: 10px;
+    font-weight: 700;
+    color: #999;
+    text-align: center;
+    grid-column: 2;
+}
+
+.offset-axis-input {
+    width: 100%;
+    min-width: 0;
+    padding: 2px 3px;
+    font-size: 10px;
+    font-family: monospace;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+    text-align: right;
+    box-sizing: border-box;
+    grid-column: 4;
+}
+
+.offset-axis-input:focus {
+    outline: none;
+    border-color: #2c3e50;
+}
+
+.offset-nudge-btn {
+    background: none;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+    width: 20px;
+    height: 20px;
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #666;
+    padding: 0;
+    transition: all 0.15s;
+}
+
+.offset-nudge-btn:hover {
+    background: #e0e0e0;
+    color: #333;
+}
+
+.offset-nudge-btn.offset-dec {
+    grid-column: 3;
+}
+
+.offset-nudge-btn.offset-inc {
+    grid-column: 5;
+}
+
+/* Component toggles in left sidebar */
+.comp-toggles {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.comp-toggle-label {
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+}
+
+/* Component cards (reuse step card pattern) */
+.comp-card {
+    padding: 8px 12px;
+    border-bottom: 1px solid #eee;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: background 0.15s;
+    user-select: none;
+}
+
+.comp-card:last-child {
+    border-bottom: none;
+}
+
+.comp-card:hover {
+    background: #f0f4f8;
+}
+
+.comp-card.active {
+    background: #e8f0fe;
+    border-left: 3px solid #2c3e50;
+}
+
+.comp-card.excluded {
+    opacity: 0.5;
+}
+
+.comp-card-name {
+    flex: 1;
+    font-size: 12px;
+    color: #333;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.comp-card-name.excluded {
+    color: #bbb;
+    text-decoration: line-through;
+}
+
+.comp-card-count {
+    width: 36px;
+    padding: 2px 4px;
+    font-size: 11px;
+    font-family: monospace;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+    text-align: center;
+    flex-shrink: 0;
+}
+
+.comp-card-count:focus {
+    outline: none;
+    border-color: #2c3e50;
+}
+
+.comp-card input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+    accent-color: #2c3e50;
+    flex-shrink: 0;
+}
+
+/* Component editor (right sidebar) */
+.comp-editor-section {
+    margin-bottom: 16px;
+}
+
+.comp-editor-section h4 {
+    font-size: 13px;
+    color: #2c3e50;
+    margin-bottom: 8px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid #eee;
+}
+
+.comp-editor-name-input {
+    width: 100%;
+    padding: 6px 8px;
+    font-size: 13px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-family: inherit;
+}
+
+.comp-editor-name-input:focus {
+    outline: none;
+    border-color: #2c3e50;
+    box-shadow: 0 0 0 2px rgba(44, 62, 80, 0.15);
+}
+
+/* Camera controls in step editor */
+.camera-actions {
+    display: flex;
+    gap: 6px;
+}
+
+.camera-actions .btn {
+    flex: 1;
+    padding: 8px 10px;
+    font-size: 12px;
+}
+
+.camera-saved-badge {
+    display: inline-block;
+    font-size: 11px;
+    color: #38a169;
+    margin-top: 4px;
+}
+
+/* Export layout */
+.export-grid {
+    display: flex;
+    gap: 6px;
+}
+
+.export-grid .btn {
+    flex: 1;
+}
+
+/* Outline button variant */
+.btn-outline {
+    background: white;
+    color: #2c3e50;
+    border: 1px solid #bdc3c7;
+}
+
+.btn-outline:hover {
+    background: #f8f9fa;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* Empty state */
+.empty-state {
+    text-align: center;
+    padding: 24px 16px;
+    color: #999;
+    font-size: 13px;
+}
+
+/* Export overlay */
+.export-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+}
+
+.export-progress {
+    background: white;
+    border-radius: 12px;
+    padding: 32px 40px;
+    text-align: center;
+    min-width: 300px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+}
+
+.export-spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid #e0e0e0;
+    border-top-color: #2c3e50;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin: 0 auto 16px;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+.export-progress p {
+    color: #333;
+    font-size: 14px;
+    margin-bottom: 16px;
+}
+
+.export-progress-bar {
+    width: 100%;
+    height: 6px;
+    background: #e0e0e0;
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.export-progress-fill {
+    height: 100%;
+    background: #2c3e50;
+    border-radius: 3px;
+    transition: width 0.3s;
+    width: 0%;
+}
+
+/* Step actions top */
+.step-actions-top {
+    display: flex;
+    gap: 6px;
+}
+
+.step-actions-top .btn {
+    flex: 1;
+    font-size: 12px;
+    padding: 8px 10px;
+}
+
+/* Status bar override for light theme */
+.status-bar {
+    background: #2c3e50;
+}

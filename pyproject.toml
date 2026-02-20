@@ -31,6 +31,7 @@ dependencies = [
     "fastapi>=0.118.0",
     "uvicorn>=0.37.0",
     "python-multipart>=0.0.6",
+    "playwright>=1.58.0",
 ]
 
 [project.optional-dependencies]
@@ -47,6 +48,7 @@ aruco-annotator = "aruco_annotator.main:main"
 assembly-app = "assembly_app.main:main"
 grasp-points-annotator = "grasp_points_annotator.main:main"
 symmetry-exporter = "symmetry_exporter.main:main"
+instruction-manual-generator = "instruction_manual_generator.main:main"
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]

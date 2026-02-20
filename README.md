@@ -48,6 +48,7 @@ uv run aruco-annotator          # Annotate ArUco markers and grasps
 uv run assembly-app             # Plan assemblies in the browser
 uv run grasp-points-annotator   # Create grasp point annotations
 uv run symmetry-exporter        # Visualize/export symmetry data
+uv run instruction-manual-generator  # Build assembly instruction manuals
 ```
 
 ### ArUco Localizer
@@ -71,6 +72,7 @@ aruco-grasp-annotator/
 │   ├── aruco_annotator/        # ArUco marker + grasp annotator
 │   ├── aruco_localizer/        # Localization utilities
 │   ├── assembly_app/           # 3D assembly web app
+│   ├── instruction_manual_generator/  # Assembly instruction manual generator
 │   ├── grasp_points_annotator/ # Grasp points annotator
 │   └── symmetry_exporter/      # Symmetry visualization/exporter
 ├── utils/                      # Shared Isaac Sim/automation scripts

@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Instruction Manual Builder</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/OBJLoader.js"></script>
+    <link rel="stylesheet" href="/static/shared/css/base.css">
+    <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- LEFT SIDEBAR -->
+        <div class="sidebar sidebar-left">
+            <div class="controls-panel">
+                <h3>Assembly</h3>
+                <div class="input-group">
+                    <label>Assembly File</label>
+                    <select id="assemblySelect">
+                        <option value="">-- Select Assembly --</option>
+                    </select>
+                </div>
+                <button class="btn" onclick="loadAssembly()">Load Assembly</button>
+                <div class="input-group" style="margin-top: 12px;">
+                    <label>Manual Title</label>
+                    <input type="text" id="manualTitle" placeholder="FMB Assembly 1" value="FMB Assembly 1">
+                </div>
+            </div>
+
+            <div class="controls-panel">
+                <h3>Components</h3>
+                <div class="comp-toggles">
+                    <label class="comp-toggle-label">
+                        <input type="checkbox" id="groupComponents" checked onchange="toggleGroupComponents(this.checked)">
+                        Group by type
+                    </label>
+                    <label class="comp-toggle-label">
+                        <input type="checkbox" id="cadOrientation" onchange="toggleCADOrientation(this.checked)">
+                        CAD orientation
+                    </label>
+                </div>
+                <div id="componentsList" class="steps-list">
+                    <div class="empty-state">Load an assembly to begin</div>
+                </div>
+            </div>
+
+            <div class="controls-panel">
+                <h3>Steps</h3>
+                <div class="step-actions-top">
+                    <button class="btn" onclick="autoGenerateSteps()">Auto-Generate Steps</button>
+                    <button class="btn" onclick="addStep()">Add Step</button>
+                </div>
+                <div class="input-group" style="margin-top: 6px;">
+                    <label>Hover Height (m)</label>
+                    <input type="number" id="hoverHeight" value="0.05" step="0.01" min="0" style="width: 80px; font-family: monospace;">
+                </div>
+                <div id="stepsList" class="steps-list">
+                    <div class="empty-state">Load an assembly to begin</div>
+                </div>
+            </div>
+
+            <div class="controls-panel">
+                <h3>Export</h3>
+                <div class="export-grid">
+                    <button class="btn" onclick="exportPNG()">Export PNG</button>
+                    <button class="btn" onclick="exportPDF()">Export PDF</button>
+                </div>
+                <div class="export-grid" style="margin-top: 4px;">
+                    <button class="btn btn-outline" onclick="saveManualConfig()">Save Manual</button>
+                    <button class="btn btn-outline" onclick="document.getElementById('manualFileInput').click()">Load Manual</button>
+                </div>
+                <input type="file" id="manualFileInput" accept=".json" style="display: none;" onchange="loadManualFromFile(event)">
+            </div>
+
+            <div class="controls-panel">
+                <h3>Export Layout</h3>
+                <div class="input-group">
+                    <label>Steps per Row</label>
+                    <select id="stepsPerRow" onchange="updateLayoutPreview()">
+                        <option value="2" selected>2 columns</option>
+                        <option value="1">1 column (full width)</option>
+                        <option value="3">3 columns</option>
+                    </select>
+                </div>
+                <div class="input-group">
+                    <label>Steps per Page</label>
+                    <input type="number" id="stepsPerPage" value="4" min="1" max="12" onchange="updateLayoutPreview()">
+                </div>
+                <div class="input-group">
+                    <label>Image Resolution</label>
+                    <select id="exportResolution">
+                        <option value="800">800px (Fast)</option>
+                        <option value="1200" selected>1200px (Standard)</option>
+                        <option value="1600">1600px (High)</option>
+                    </select>
+                </div>
+            </div>
+
+            <div id="statusMessages"></div>
+        </div>
+
+        <!-- CENTER VIEWER -->
+        <div class="main-viewer">
+            <div class="viewer-container" id="viewer"></div>
+            <div class="status-bar" id="statusBar">
+                <span id="statusText">Load an assembly to begin</span>
+                <div class="status-info">
+                    <span id="stepInfo">Step: --</span>
+                    <span id="componentCount">Components: 0</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- RIGHT SIDEBAR -->
+        <div class="sidebar sidebar-right">
+            <div id="componentEditor">
+                <div class="controls-panel">
+                    <h3>Component Editor</h3>
+                    <div id="componentEditorContent" class="empty-state">
+                        Select a component to edit
+                    </div>
+                </div>
+            </div>
+            <div id="stepEditor">
+                <div class="controls-panel">
+                    <h3>Step Editor</h3>
+                    <div id="stepEditorContent" class="empty-state">
+                        Select a step to edit
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Export progress overlay -->
+    <div id="exportOverlay" class="export-overlay" style="display: none;">
+        <div class="export-progress">
+            <div class="export-spinner"></div>
+            <p id="exportStatus">Rendering steps...</p>
+            <div class="export-progress-bar">
+                <div id="exportProgressFill" class="export-progress-fill"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
