@@ -547,7 +547,7 @@ function updateSelectedObjectInfo() {
             <h4 style="margin-top: 10px; margin-bottom: 8px; font-size: 13px; color: #555;">Assembly Order</h4>
             <div class="transform-row" style="margin-bottom: 10px;">
                 <input type="number" id="assemblyOrderInput" class="control-input" style="flex: 1;"
-                       min="1" step="1" value="${assemblyOrder != null ? assemblyOrder : ''}"
+                       min="0" step="1" value="${assemblyOrder != null ? assemblyOrder : ''}"
                        onchange="setAssemblyOrder(parseInt(this.value))">
             </div>
 
@@ -715,8 +715,8 @@ window.setPegAxis = setPegAxis;
 
 function setAssemblyOrder(value) {
     if (!selectedObject) return;
-    if (isNaN(value) || value < 1) {
-        showMessage("Assembly order must be a positive integer", "error");
+    if (isNaN(value) || value < 0) {
+        showMessage("Assembly order must be 0 or greater", "error");
         updateSelectedObjectInfo();
         return;
     }
@@ -737,7 +737,7 @@ function setAssemblyOrder(value) {
 window.setAssemblyOrder = setAssemblyOrder;
 
 function getNextAssemblyOrder() {
-    let maxOrder = 0;
+    let maxOrder = -1;
     sceneObjects.forEach(obj => {
         if (obj.userData && obj.userData.type === 'component' && obj.userData.assemblyOrder != null) {
             maxOrder = Math.max(maxOrder, obj.userData.assemblyOrder);

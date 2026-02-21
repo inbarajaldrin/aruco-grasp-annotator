@@ -4,7 +4,7 @@
     {
       "name": "base3",
       "type": "board",
-      "assembly_order": 1,
+      "assembly_order": 0,
       "position": {
         "x": 0.0,
         "y": 0.0,
@@ -28,7 +28,7 @@
       "name": "fork_orange",
       "type": "object",
       "subtype": "block",
-      "assembly_order": 4,
+      "assembly_order": 3,
       "position": {
         "x": 0.0,
         "y": 0.036,
@@ -52,7 +52,7 @@
       "name": "fork_yellow",
       "type": "object",
       "subtype": "block",
-      "assembly_order": 5,
+      "assembly_order": 4,
       "position": {
         "x": 0.0,
         "y": -0.036,
@@ -76,7 +76,7 @@
       "name": "line_brown",
       "type": "object",
       "subtype": "block",
-      "assembly_order": 2,
+      "assembly_order": 1,
       "position": {
         "x": 0.0255,
         "y": 0.0,
@@ -100,7 +100,7 @@
       "name": "line_red",
       "type": "object",
       "subtype": "block",
-      "assembly_order": 3,
+      "assembly_order": 2,
       "position": {
         "x": -0.0255,
         "y": 0.0,

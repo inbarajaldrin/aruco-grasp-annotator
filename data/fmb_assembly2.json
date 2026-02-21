@@ -4,7 +4,7 @@
     {
       "name": "base2",
       "type": "board",
-      "assembly_order": 1,
+      "assembly_order": 0,
       "position": {
         "x": 0,
         "y": 0,
@@ -28,7 +28,7 @@
       "name": "hex_blue",
       "type": "object",
       "subtype": "peg",
-      "assembly_order": 5,
+      "assembly_order": 4,
       "axis": "y",
       "position": {
         "x": 0.0526,
@@ -53,7 +53,7 @@
       "name": "hex_red",
       "type": "object",
       "subtype": "peg",
-      "assembly_order": 4,
+      "assembly_order": 3,
       "axis": "y",
       "position": {
         "x": -0.0526,
@@ -78,7 +78,7 @@
       "name": "inverted_u_brown",
       "type": "object",
       "subtype": "socket",
-      "assembly_order": 3,
+      "assembly_order": 2,
       "position": {
         "x": 0,
         "y": 0,
@@ -102,7 +102,7 @@
       "name": "u_green",
       "type": "object",
       "subtype": "block",
-      "assembly_order": 2,
+      "assembly_order": 1,
       "position": {
         "x": 0,
         "y": 0,
