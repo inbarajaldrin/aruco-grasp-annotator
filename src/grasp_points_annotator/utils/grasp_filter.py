@@ -15,8 +15,8 @@ class GraspFilter:
 
     def __init__(
         self,
-        gripper_max_width_mm: float = 70.0,
-        gripper_half_open_width_mm: float = 30.0,
+        gripper_max_width_mm: float = 100.0,
+        grasp_clearance_mm: float = 14.0,
         safety_margin_mm: float = 0.0,
         gripper_tip_thickness_mm: float = 20.0,
         max_gap_px: int = 20,
@@ -28,9 +28,9 @@ class GraspFilter:
         Initialize the grasp filter.
 
         Args:
-            gripper_max_width_mm: Maximum gripper opening (actual clearance during closing)
-            gripper_half_open_width_mm: Half-open gripper width
-            safety_margin_mm: Safety margin for open gripper
+            gripper_max_width_mm: Maximum gripper opening width in mm
+            grasp_clearance_mm: Extra clearance added to object width for approach/release
+            safety_margin_mm: Safety margin subtracted from max gripper width
             gripper_tip_thickness_mm: Thickness of gripper finger tips
             max_gap_px: Adjacency threshold - regions within this gap are considered connected
             image_size: Rendered image size in pixels
@@ -38,7 +38,7 @@ class GraspFilter:
             symmetry_tolerance_mm: Tolerance for symmetric grasp check
         """
         self.gripper_max_width_mm = gripper_max_width_mm
-        self.gripper_half_open_width_mm = gripper_half_open_width_mm
+        self.grasp_clearance_mm = grasp_clearance_mm
         self.safety_margin_mm = safety_margin_mm
         self.gripper_tip_thickness_mm = gripper_tip_thickness_mm
         self.max_gap_px = max_gap_px
@@ -46,9 +46,8 @@ class GraspFilter:
         self.scale_factor = scale_factor
         self.symmetry_tolerance_mm = symmetry_tolerance_mm
 
-        # Calculate half widths (finger extension from center)
+        # Max finger extension from center (used for feasibility check)
         self.half_open_mm = (gripper_max_width_mm / 2) - safety_margin_mm
-        self.half_half_open_mm = gripper_half_open_width_mm / 2
 
     def compute_pixel_to_mm(self, grasp_data: Dict[str, Any]) -> float:
         """Compute pixel to millimeter conversion factor from wireframe data."""
@@ -463,33 +462,52 @@ class GraspFilter:
         for region in regions:
             region_id = region['id']
 
-            # Check X-axis grasps if enabled
-            valid_x = []
+            # Compute the region's own half-extent (minimum clearance from center)
+            x_half_extent_mm = max(
+                (region['center_x'] - region['left']) * pixel_to_mm,
+                (region['right'] - region['center_x']) * pixel_to_mm,
+            )
+            y_half_extent_mm = max(
+                (region['center_y'] - region['top']) * pixel_to_mm,
+                (region['bottom'] - region['center_y']) * pixel_to_mm,
+            )
+
+            # Check X-axis: validate at the region's own extent + half clearance
+            # This avoids false collisions from checking at max gripper width
+            x_width_mm = None
             if check_x_axis:
-                valid_x_half, _, _ = self.check_x_grasp(region, regions, pixel_to_mm, self.half_half_open_mm)
-                valid_x_open, _, _ = self.check_x_grasp(region, regions, pixel_to_mm, self.half_open_mm)
+                check_half_mm = x_half_extent_mm + self.grasp_clearance_mm / 2
+                if check_half_mm <= self.half_open_mm:
+                    valid_x, clearance_x_mm, _ = self.check_x_grasp(
+                        region, regions, pixel_to_mm, check_half_mm
+                    )
+                    if valid_x:
+                        x_width_mm = round(
+                            min(clearance_x_mm * 2 + self.grasp_clearance_mm,
+                                self.gripper_max_width_mm),
+                            1
+                        )
 
-                if valid_x_half:
-                    valid_x.append('half-open')
-                if valid_x_open:
-                    valid_x.append('open')
-
-            # Check Y-axis grasps if enabled
-            valid_y = []
+            # Check Y-axis: same approach
+            y_width_mm = None
             if check_y_axis:
-                valid_y_half, _, _ = self.check_y_grasp(region, regions, pixel_to_mm, self.half_half_open_mm)
-                valid_y_open, _, _ = self.check_y_grasp(region, regions, pixel_to_mm, self.half_open_mm)
-
-                if valid_y_half:
-                    valid_y.append('half-open')
-                if valid_y_open:
-                    valid_y.append('open')
+                check_half_mm = y_half_extent_mm + self.grasp_clearance_mm / 2
+                if check_half_mm <= self.half_open_mm:
+                    valid_y, clearance_y_mm, _ = self.check_y_grasp(
+                        region, regions, pixel_to_mm, check_half_mm
+                    )
+                    if valid_y:
+                        y_width_mm = round(
+                            min(clearance_y_mm * 2 + self.grasp_clearance_mm,
+                                self.gripper_max_width_mm),
+                            1
+                        )
 
             results.append({
                 'grasp_id': region_id,
-                'valid_x': valid_x,
-                'valid_y': valid_y,
-                'is_valid': len(valid_x) > 0 or len(valid_y) > 0
+                'x_axis_gripper_width_mm': x_width_mm,
+                'y_axis_gripper_width_mm': y_width_mm,
+                'is_valid': x_width_mm is not None or y_width_mm is not None
             })
 
         # Filter grasp points to only include valid ones
@@ -507,7 +525,7 @@ class GraspFilter:
             'total_filtered': len(filtered_grasp_points),
             'filter_params': {
                 'gripper_max_width_mm': self.gripper_max_width_mm,
-                'gripper_half_open_width_mm': self.gripper_half_open_width_mm,
+                'grasp_clearance_mm': self.grasp_clearance_mm,
                 'gripper_tip_thickness_mm': self.gripper_tip_thickness_mm,
                 'max_gap_px': self.max_gap_px,
                 'symmetry_tolerance_mm': self.symmetry_tolerance_mm

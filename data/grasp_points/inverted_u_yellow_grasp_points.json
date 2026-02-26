@@ -8,7 +8,7 @@
   "filter_applied": true,
   "filter_params": {
     "gripper_max_width_mm": 100.0,
-    "gripper_half_open_width_mm": 30.0,
+    "grasp_clearance_mm": 14.0,
     "gripper_tip_thickness_mm": 20.0,
     "max_gap_px": 20,
     "symmetry_tolerance_mm": 10.0
@@ -28,12 +28,8 @@
         "z": 1.0
       },
       "grasp_validity": {
-        "x_axis": [
-          "open"
-        ],
-        "y_axis": [
-          "open"
-        ]
+        "x_axis_gripper_width_mm": null,
+        "y_axis_gripper_width_mm": 45.6
       }
     },
     {
@@ -50,13 +46,8 @@
         "z": 1.0
       },
       "grasp_validity": {
-        "x_axis": [
-          "open"
-        ],
-        "y_axis": [
-          "half-open",
-          "open"
-        ]
+        "x_axis_gripper_width_mm": null,
+        "y_axis_gripper_width_mm": 33.7
       }
     },
     {
@@ -73,12 +64,8 @@
         "z": 1.0
       },
       "grasp_validity": {
-        "x_axis": [
-          "open"
-        ],
-        "y_axis": [
-          "open"
-        ]
+        "x_axis_gripper_width_mm": null,
+        "y_axis_gripper_width_mm": 45.6
       }
     }
   ],

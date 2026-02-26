@@ -33,8 +33,8 @@ async def filter_grasp_points(data: dict[str, Any] = Body(...)):
         marker_id = data.get("marker_id")
 
         # Filter parameters (with defaults from grasp_filter.py)
-        gripper_max_width_mm = data.get("gripper_max_width_mm", 70.0)
-        gripper_half_open_width_mm = data.get("gripper_half_open_width_mm", 30.0)
+        gripper_max_width_mm = data.get("gripper_max_width_mm", 100.0)
+        grasp_clearance_mm = data.get("grasp_clearance_mm", 14.0)
         gripper_tip_thickness_mm = data.get("gripper_tip_thickness_mm", 20.0)
         max_gap_px = data.get("max_gap_px", 20)
         symmetry_tolerance_mm = data.get("symmetry_tolerance_mm", 10.0)
@@ -94,7 +94,7 @@ async def filter_grasp_points(data: dict[str, Any] = Body(...)):
         # Initialize and run filter
         grasp_filter = GraspFilter(
             gripper_max_width_mm=gripper_max_width_mm,
-            gripper_half_open_width_mm=gripper_half_open_width_mm,
+            grasp_clearance_mm=grasp_clearance_mm,
             gripper_tip_thickness_mm=gripper_tip_thickness_mm,
             max_gap_px=max_gap_px,
             symmetry_tolerance_mm=symmetry_tolerance_mm
@@ -116,8 +116,8 @@ async def filter_grasp_points(data: dict[str, Any] = Body(...)):
             validity_info = validity_map.get(grasp_id, {})
             enhanced_gp = gp.copy()
             enhanced_gp['grasp_validity'] = {
-                'x_axis': validity_info.get('valid_x', []),
-                'y_axis': validity_info.get('valid_y', [])
+                'x_axis_gripper_width_mm': validity_info.get('x_axis_gripper_width_mm'),
+                'y_axis_gripper_width_mm': validity_info.get('y_axis_gripper_width_mm')
             }
             filtered_points_with_metadata.append(enhanced_gp)
 
