@@ -472,12 +472,14 @@ class GraspFilter:
                 (region['bottom'] - region['center_y']) * pixel_to_mm,
             )
 
-            # Check X-axis: validate at the region's own extent + half clearance
-            # This avoids false collisions from checking at max gripper width
+            # Check X-axis: start at region extent + half clearance, widen if
+            # adjacent regions extend blocking beyond that initial check width.
             x_width_mm = None
             if check_x_axis:
                 check_half_mm = x_half_extent_mm + self.grasp_clearance_mm / 2
-                if check_half_mm <= self.half_open_mm:
+                for _ in range(3):
+                    if check_half_mm > self.half_open_mm:
+                        break
                     valid_x, clearance_x_mm, _ = self.check_x_grasp(
                         region, regions, pixel_to_mm, check_half_mm
                     )
@@ -487,12 +489,19 @@ class GraspFilter:
                                 self.gripper_max_width_mm),
                             1
                         )
+                        break
+                    if clearance_x_mm <= check_half_mm:
+                        break  # Failed for symmetry/tip reasons, widening won't help
+                    # Adjacent regions extended blocking beyond check width — widen
+                    check_half_mm = clearance_x_mm + self.grasp_clearance_mm / 2
 
-            # Check Y-axis: same approach
+            # Check Y-axis: same iterative approach
             y_width_mm = None
             if check_y_axis:
                 check_half_mm = y_half_extent_mm + self.grasp_clearance_mm / 2
-                if check_half_mm <= self.half_open_mm:
+                for _ in range(3):
+                    if check_half_mm > self.half_open_mm:
+                        break
                     valid_y, clearance_y_mm, _ = self.check_y_grasp(
                         region, regions, pixel_to_mm, check_half_mm
                     )
@@ -502,6 +511,10 @@ class GraspFilter:
                                 self.gripper_max_width_mm),
                             1
                         )
+                        break
+                    if clearance_y_mm <= check_half_mm:
+                        break
+                    check_half_mm = clearance_y_mm + self.grasp_clearance_mm / 2
 
             results.append({
                 'grasp_id': region_id,

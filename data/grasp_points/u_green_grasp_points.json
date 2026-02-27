@@ -46,7 +46,7 @@
         "z": 1.0
       },
       "grasp_validity": {
-        "x_axis_gripper_width_mm": null,
+        "x_axis_gripper_width_mm": 84.0,
         "y_axis_gripper_width_mm": 52.5
       }
     },
