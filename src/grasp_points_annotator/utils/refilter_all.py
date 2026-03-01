@@ -5,7 +5,7 @@ Runs the full pipeline (step1 → filter → step2) for each object to regenerat
 grasp point data with numeric gripper_width_mm values instead of string labels.
 
 Usage:
-    uv run python refilter_all.py
+    uv run python src/grasp_points_annotator/utils/refilter_all.py
 """
 
 import matplotlib
@@ -21,12 +21,12 @@ import uvicorn
 
 
 BASE_URL = "http://127.0.0.1:8099"
-DATA_DIR = Path(__file__).parent / "data" / "grasp_points"
+DATA_DIR = Path(__file__).resolve().parent.parent.parent.parent / "data" / "grasp_points"
 
 
 def start_server():
     """Start the FastAPI server in a background thread."""
-    from src.grasp_points_annotator.app import app
+    from grasp_points_annotator.app import app
     config = uvicorn.Config(app, host="127.0.0.1", port=8099, log_level="warning")
     server = uvicorn.Server(config)
     thread = threading.Thread(target=server.run, daemon=True)
