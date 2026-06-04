@@ -85,57 +85,6 @@ def check_orientation_match(detected_rotation_matrix, expected_rotation, toleran
     
     return rotation_angle_degrees <= tolerance_degrees
 
-def project_vertices_to_image(vertices, camera_matrix, dist_coeffs):
-    """Project 3D vertices to 2D image coordinates"""
-    if len(vertices) == 0:
-        return np.array([])
-    
-    # Project points to image plane
-    projected_points, _ = cv2.projectPoints(
-        vertices.astype(np.float32), 
-        np.zeros((3, 1)),  # No rotation (already in camera frame)
-        np.zeros((3, 1)),  # No translation (already in camera frame)
-        camera_matrix, 
-        dist_coeffs
-    )
-    
-    return projected_points.reshape(-1, 2).astype(np.int32)
-
-def draw_wireframe(frame, projected_vertices, edges, color=(0, 255, 0), thickness=2):
-    """Draw wireframe on the image"""
-    if len(projected_vertices) == 0:
-        return
-    
-    # Filter out vertices that are outside the image bounds
-    height, width = frame.shape[:2]
-    valid_vertices = []
-    valid_indices = []
-    
-    for i, vertex in enumerate(projected_vertices):
-        x, y = vertex
-        if 0 <= x < width and 0 <= y < height:
-            valid_vertices.append(vertex)
-            valid_indices.append(i)
-    
-    if len(valid_vertices) == 0:
-        return
-    
-    # Create mapping from original indices to valid indices
-    index_map = {orig_idx: new_idx for new_idx, orig_idx in enumerate(valid_indices)}
-    
-    # Draw edges
-    for edge in edges:
-        if len(edge) >= 2:
-            start_idx, end_idx = edge[0], edge[1]
-            if start_idx in index_map and end_idx in index_map:
-                start_point = tuple(valid_vertices[index_map[start_idx]])
-                end_point = tuple(valid_vertices[index_map[end_idx]])
-                cv2.line(frame, start_point, end_point, color, thickness)
-    
-    # Draw vertices as small circles
-    for vertex in valid_vertices:
-        cv2.circle(frame, tuple(vertex), 3, (255, 0, 0), -1)
-
 def estimate_pose_with_kalman(frame, corners, ids, camera_matrix, dist_coeffs, marker_size,
                              kalman_filters, marker_stabilities, last_seen_frames, current_frame):
     """Estimate pose with Kalman filtering and stability checking"""
