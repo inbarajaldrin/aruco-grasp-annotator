@@ -2,27 +2,42 @@ import cv2
 import cv2.aruco as aruco
 import numpy as np
 import json
-import os
 import argparse
 from pathlib import Path
-from scipy.spatial.transform import Rotation as R
 
-# =============================================================================
-# KALMAN FILTER CONFIGURATION - ADJUSTABLE VARIABLES
-# =============================================================================
-
-# Temporal filtering parameters
-MAX_MOVEMENT_THRESHOLD = 0.05  # meters - maximum allowed movement between frames
-HOLD_REQUIRED_FRAMES = 2       # frames - required stable detections before confirmation
-GHOST_TRACKING_FRAMES = 15     # frames - continue tracking when marker lost
-BLEND_FACTOR = 0.99            # 0.0-1.0 - trust in measurements vs predictions
-
-# Kalman filter noise parameters
-PROCESS_NOISE_POSITION = 1e-4   # Process noise for position (x,y,z)
-PROCESS_NOISE_QUATERNION = 1e-3 # Process noise for quaternion (qx,qy,qz,qw)
-PROCESS_NOISE_VELOCITY = 1e-4   # Process noise for velocity (vx,vy,vz)
-MEASUREMENT_NOISE_POSITION = 1e-4 # Measurement noise for position
-MEASUREMENT_NOISE_QUATERNION = 1e-4 # Measurement noise for quaternion
+# Shared utilities imported from core (single source of truth); no local duplicates.
+from core.kalman_filter import (
+    QuaternionKalman,
+    MAX_MOVEMENT_THRESHOLD,
+    HOLD_REQUIRED_FRAMES,
+    GHOST_TRACKING_FRAMES,
+    BLEND_FACTOR,
+    PROCESS_NOISE_POSITION,
+    PROCESS_NOISE_QUATERNION,
+    PROCESS_NOISE_VELOCITY,
+    MEASUREMENT_NOISE_POSITION,
+    MEASUREMENT_NOISE_QUATERNION,
+)
+from core.pose_math import (
+    rvec_to_quat,
+    quat_to_rvec,
+    slerp_quat,
+    euler_to_rotation_matrix,
+    rotation_matrix_to_euler,
+    estimate_object_pose_from_marker,
+    pose_to_world,
+)
+from core.model_io import (
+    load_wireframe_data,
+    load_aruco_annotations,
+    get_available_models,
+    select_model_interactive,
+)
+from core.mesh_ops import (
+    transform_mesh_to_camera_frame,
+    project_vertices_to_image,
+    draw_wireframe,
+)
 
 # Camera parameters
 CAMERA_WIDTH = 1280
@@ -30,7 +45,7 @@ CAMERA_HEIGHT = 720
 CAMERA_HFOV = 69.4  # degrees
 CAMERA_VFOV = 42.5  # degrees
 
-# Camera orientation (world ← camera). Assumes the camera is facing the marker from
+# Camera orientation (world <- camera). Assumes the camera is facing the marker from
 # above (top-down) so we can lift camera-frame poses into a nominal world frame.
 CAMERA_QUAT_WORLD = np.array([0.0, 1.0, 0.0, 0.0])  # [x, y, z, w]
 
@@ -38,395 +53,6 @@ CAMERA_QUAT_WORLD = np.array([0.0, 1.0, 0.0, 0.0])  # [x, y, z, w]
 MARKER_SIZE = 0.021  # meters - adjust based on your markers
 ARUCO_DICTIONARY = aruco.DICT_4X4_50
 
-# =============================================================================
-# KALMAN FILTER CLASSES
-# =============================================================================
-
-class QuaternionKalman:
-    """Kalman filter for 6D pose estimation with quaternions"""
-    
-    def __init__(self):
-        # 10 states: [x, y, z, qx, qy, qz, qw, vx, vy, vz]
-        self.kf = cv2.KalmanFilter(10, 7)
-        
-        dt = 1.0  # Time step (assuming 1 frame = 1 time unit)
-        
-        # A: Transition matrix (10x10)
-        self.kf.transitionMatrix = np.eye(10, dtype=np.float32)
-        for i in range(3):  # x += vx*dt, y += vy*dt, z += vz*dt
-            self.kf.transitionMatrix[i, i+7] = dt
-        
-        # H: Measurement matrix (7x10) - we measure position and quaternion
-        self.kf.measurementMatrix = np.zeros((7, 10), dtype=np.float32)
-        self.kf.measurementMatrix[0:7, 0:7] = np.eye(7)
-        
-        # Q: Process noise covariance
-        self.kf.processNoiseCov = np.eye(10, dtype=np.float32) * 1e-6
-        for i in range(3):   # position noise
-            self.kf.processNoiseCov[i, i] = PROCESS_NOISE_POSITION
-        for i in range(3, 7):  # quaternion noise
-            self.kf.processNoiseCov[i, i] = PROCESS_NOISE_QUATERNION
-        for i in range(7, 10):  # velocity noise
-            self.kf.processNoiseCov[i, i] = PROCESS_NOISE_VELOCITY
-        
-        # R: Measurement noise covariance
-        self.kf.measurementNoiseCov = np.eye(7, dtype=np.float32)
-        for i in range(3):   # position measurement noise
-            self.kf.measurementNoiseCov[i, i] = MEASUREMENT_NOISE_POSITION
-        for i in range(3, 7):  # quaternion measurement noise
-            self.kf.measurementNoiseCov[i, i] = MEASUREMENT_NOISE_QUATERNION
-        
-        # Initial error covariance
-        self.kf.errorCovPost = np.eye(10, dtype=np.float32)
-        
-        # Initial state
-        self.kf.statePost = np.zeros((10, 1), dtype=np.float32)
-        self.kf.statePost[3:7] = np.array([[0], [0], [0], [1]], dtype=np.float32)  # Identity quaternion
-    
-    def correct(self, tvec, rvec):
-        """Update filter with new measurement"""
-        quat = rvec_to_quat(rvec)
-        measurement = np.vstack((tvec.reshape(3, 1), np.array(quat).reshape(4, 1))).astype(np.float32)
-        self.kf.correct(measurement)
-    
-    def predict(self):
-        """Predict next state"""
-        pred = self.kf.predict()
-        pred_tvec = pred[0:3].flatten()
-        pred_quat = pred[3:7].flatten()
-        # Normalize quaternion to prevent drift
-        pred_quat /= np.linalg.norm(pred_quat)
-        pred_rvec = quat_to_rvec(pred_quat).flatten()
-        return pred_tvec, pred_rvec
-
-# =============================================================================
-# UTILITY FUNCTIONS
-# =============================================================================
-
-def rvec_to_quat(rvec):
-    """Convert OpenCV rotation vector to quaternion [x, y, z, w]"""
-    rot, _ = cv2.Rodrigues(rvec)
-    return R.from_matrix(rot).as_quat()
-
-def quat_to_rvec(quat):
-    """Convert quaternion [x, y, z, w] to OpenCV rotation vector"""
-    rot = R.from_quat(quat).as_matrix()
-    rvec, _ = cv2.Rodrigues(rot)
-    return rvec
-
-def slerp_quat(q1, q2, blend=0.5):
-    """Spherical linear interpolation between two quaternions"""
-    # Normalize quaternions
-    q1 = q1 / np.linalg.norm(q1)
-    q2 = q2 / np.linalg.norm(q2)
-    
-    # Calculate dot product
-    dot = np.dot(q1, q2)
-    
-    # If the dot product is negative, slerp won't take the shorter path
-    if dot < 0.0:
-        q2 = -q2
-        dot = -dot
-    
-    # If the inputs are too close for comfort, linearly interpolate
-    if dot > 0.9995:
-        result = q1 + blend * (q2 - q1)
-        return result / np.linalg.norm(result)
-    
-    # Calculate the angle between the quaternions
-    theta_0 = np.arccos(np.abs(dot))
-    sin_theta_0 = np.sin(theta_0)
-    
-    theta = theta_0 * blend
-    sin_theta = np.sin(theta)
-    
-    s0 = np.cos(theta) - dot * sin_theta / sin_theta_0
-    s1 = sin_theta / sin_theta_0
-    
-    return s0 * q1 + s1 * q2
-
-def load_wireframe_data(json_file):
-    """Load wireframe data from JSON file"""
-    with open(json_file, 'r') as f:
-        data = json.load(f)
-    return data['vertices'], data['edges']
-
-def load_aruco_annotations(json_file):
-    """Load ArUco marker annotations from JSON file."""
-    with open(json_file, 'r') as f:
-        data = json.load(f)
-    # Return dictionary name so callers can auto-select 4x4 vs 5x5, etc.
-    return (
-        data['markers'],
-        data.get('size', 0.021),
-        data.get('border_width', 0.05),
-        data.get('aruco_dictionary', 'DICT_4X4_50'),
-    )
-
-def get_available_models(data_dir):
-    """Get list of available models from the data directory"""
-    wireframe_dir = Path(data_dir) / "wireframe"
-    aruco_dir = Path(data_dir) / "aruco"
-    
-    if not wireframe_dir.exists() or not aruco_dir.exists():
-        return []
-    
-    # Get all wireframe files
-    wireframe_files = list(wireframe_dir.glob("*_wireframe.json"))
-    aruco_files = list(aruco_dir.glob("*_aruco.json"))
-    
-    # Extract model names (remove _wireframe.json and _aruco.json suffixes)
-    wireframe_models = {f.stem.replace("_wireframe", "") for f in wireframe_files}
-    aruco_models = {f.stem.replace("_aruco", "") for f in aruco_files}
-    
-    # Return intersection (models that have both wireframe and aruco files)
-    available_models = wireframe_models.intersection(aruco_models)
-    return sorted(list(available_models))
-
-def select_model_interactive(available_models):
-    """Interactive model selection"""
-    if not available_models:
-        print("No models found in data directory!")
-        return None
-    
-    print("\nAvailable models:")
-    for i, model in enumerate(available_models, 1):
-        print(f"  {i}. {model}")
-    
-    while True:
-        try:
-            choice = input(f"\nSelect model (1-{len(available_models)}) or 'q' to quit: ").strip()
-            if choice.lower() == 'q':
-                return None
-            choice_num = int(choice)
-            if 1 <= choice_num <= len(available_models):
-                selected_model = available_models[choice_num - 1]
-                print(f"Selected model: {selected_model}")
-                return selected_model
-            else:
-                print(f"Please enter a number between 1 and {len(available_models)}")
-        except ValueError:
-            print("Please enter a valid number or 'q' to quit")
-
-def estimate_object_pose_from_marker(marker_pose, aruco_annotation):
-    """
-    Estimate the 6D pose of the object center from ArUco marker pose.
-    Uses homogeneous transformation matrices to compute position and orientation together.
-    Returns position (tvec) and orientation (rvec) as rotation vector.
-    
-    Note: OpenCV's solvePnP returns marker pose in camera frame, but the marker's
-    coordinate frame convention may differ from the CAD model. The JSON format uses
-    T_object_to_marker which is inverted to get T_marker_to_object for pose estimation.
-    
-    Args:
-        marker_pose: Tuple of (marker_tvec, marker_rvec) in camera frame
-        aruco_annotation: Dictionary with marker annotation data from JSON (must contain T_object_to_marker)
-    
-    Returns:
-        object_pose: (object_tvec, object_rvec) - Object center pose in camera frame
-    """
-    # Get marker position and rotation
-    marker_tvec, marker_rvec = marker_pose
-    
-    # Convert marker rotation vector to rotation matrix
-    # Use the detected marker pose directly (no in-plane rotation removal)
-    marker_rotation_matrix, _ = cv2.Rodrigues(marker_rvec)
-    marker_tvec = marker_tvec.flatten()
-    
-    # Get the marker's transformation to object center from annotation
-    # JSON format: T_object_to_marker (from object to marker)
-    # Need to invert to get T_marker_to_object
-    if 'T_object_to_marker' not in aruco_annotation:
-        raise ValueError(
-            f"Invalid JSON format! Marker ID {aruco_annotation.get('aruco_id', 'unknown')} missing required 'T_object_to_marker' field. "
-            f"Available keys: {list(aruco_annotation.keys())}"
-        )
-    
-    obj_to_marker_data = aruco_annotation['T_object_to_marker']
-    
-    # Get position and rotation from object to marker
-    t_obj_to_marker = np.array([
-        obj_to_marker_data['position']['x'],
-        obj_to_marker_data['position']['y'], 
-        obj_to_marker_data['position']['z']
-    ])
-    
-    obj_to_marker_rot = obj_to_marker_data['rotation']
-    
-    # Use quaternion from JSON (quaternions are always available)
-    quat = obj_to_marker_rot['quaternion']
-    quat_array = np.array([quat['x'], quat['y'], quat['z'], quat['w']])  # scipy uses x, y, z, w
-    R_obj_to_marker = R.from_quat(quat_array).as_matrix()
-    
-    # Invert to get T_marker_to_object
-    R_marker_to_obj = R_obj_to_marker.T
-    t_marker_to_obj = -R_marker_to_obj @ t_obj_to_marker
-    
-    # Build homogeneous transformation matrices
-    # T_camera_to_marker: Marker pose in camera frame (4x4)
-    # Using detected marker pose directly (no in-plane rotation removal)
-    R_cm = marker_rotation_matrix  # R_camera_to_marker
-    t_cm = marker_tvec
-    
-    # T_marker_to_object: Transformation from marker frame to object frame
-    # The annotator stores R_marker_to_world (from marker to world/object frame)
-    # and position of object in marker frame, so we can directly compose:
-    # T_camera_to_object = T_camera_to_marker @ T_marker_to_object
-    
-    # Build homogeneous transformation matrices
-    T_camera_to_marker = np.eye(4)
-    T_camera_to_marker[:3, :3] = R_cm
-    T_camera_to_marker[:3, 3] = t_cm
-    
-    T_marker_to_object = np.eye(4)
-    T_marker_to_object[:3, :3] = R_marker_to_obj
-    T_marker_to_object[:3, 3] = t_marker_to_obj
-    
-    # Compose transformations: T_camera_to_object = T_camera_to_marker @ T_marker_to_object
-    # This is the chain: camera → marker → object
-    T_camera_to_object = T_camera_to_marker @ T_marker_to_object
-    
-    # Extract position and orientation from combined transformation
-    object_rotation_matrix = T_camera_to_object[:3, :3]
-    object_tvec = T_camera_to_object[:3, 3]
-    
-    # Convert rotation matrix to rotation vector (standard OpenCV format)
-    object_rvec, _ = cv2.Rodrigues(object_rotation_matrix)
-    
-    return object_tvec, object_rvec
-
-def transform_mesh_to_camera_frame(vertices, object_pose):
-    """Transform mesh vertices from object center frame to camera frame"""
-    object_tvec, object_rvec = object_pose
-    
-    # Convert rotation vector to rotation matrix
-    rotation_matrix, _ = cv2.Rodrigues(object_rvec)
-    
-    # Transform vertices from object center frame to camera frame
-    # No coordinate transformation or scaling needed - vertices are already in correct frame
-    transformed_vertices = []
-    for vertex in vertices:
-        # Transform from object frame to camera frame
-        vertex_cam = rotation_matrix @ np.array(vertex) + object_tvec
-        transformed_vertices.append(vertex_cam)
-    
-    return np.array(transformed_vertices)
-
-def euler_to_rotation_matrix(roll, pitch, yaw):
-    """Convert Euler angles (roll, pitch, yaw) to rotation matrix"""
-    # Convert to radians if needed (assuming they're already in radians from JSON)
-    r, p, y = roll, pitch, yaw
-    
-    # Create rotation matrices for each axis
-    Rx = np.array([[1, 0, 0],
-                   [0, np.cos(r), -np.sin(r)],
-                   [0, np.sin(r), np.cos(r)]])
-    
-    Ry = np.array([[np.cos(p), 0, np.sin(p)],
-                   [0, 1, 0],
-                   [-np.sin(p), 0, np.cos(p)]])
-    
-    Rz = np.array([[np.cos(y), -np.sin(y), 0],
-                   [np.sin(y), np.cos(y), 0],
-                   [0, 0, 1]])
-    
-    # Combine rotations (order: Rz * Ry * Rx)
-    return Rz @ Ry @ Rx
-
-def rotation_matrix_to_euler(rotation_matrix):
-    """Convert rotation matrix to Euler angles (roll, pitch, yaw) in radians"""
-    # Extract RPY angles from rotation matrix
-    # Using ZYX convention (yaw-pitch-roll)
-    sy = np.sqrt(rotation_matrix[0, 0] * rotation_matrix[0, 0] + rotation_matrix[1, 0] * rotation_matrix[1, 0])
-    
-    singular = sy < 1e-6
-    
-    if not singular:
-        roll = np.arctan2(rotation_matrix[2, 1], rotation_matrix[2, 2])
-        pitch = np.arctan2(-rotation_matrix[2, 0], sy)
-        yaw = np.arctan2(rotation_matrix[1, 0], rotation_matrix[0, 0])
-    else:
-        roll = np.arctan2(-rotation_matrix[1, 2], rotation_matrix[1, 1])
-        pitch = np.arctan2(-rotation_matrix[2, 0], sy)
-        yaw = 0
-    
-    return np.array([roll, pitch, yaw])
-
-
-def pose_to_world(object_tvec_cam, object_rvec_cam, camera_quat_world=CAMERA_QUAT_WORLD):
-    """
-    Convert an object pose from camera frame to a nominal world frame using a fixed camera quaternion.
-    Assumes the camera is facing the marker from above (top-down).
-    
-    Args:
-        object_tvec_cam: Translation vector in camera frame.
-        object_rvec_cam: Rotation vector in camera frame.
-        camera_quat_world: Quaternion (world ← camera) used for the lift.
-    
-    Returns:
-        tuple: (tvec_world, rvec_world, quat_world, rpy_world)
-    """
-    cam_rot = R.from_quat(camera_quat_world)
-    rot_cam, _ = cv2.Rodrigues(object_rvec_cam)
-    
-    world_rotation_matrix = cam_rot.as_matrix() @ rot_cam
-    world_rvec, _ = cv2.Rodrigues(world_rotation_matrix)
-    quat_world = R.from_matrix(world_rotation_matrix).as_quat()
-    rpy_world = rotation_matrix_to_euler(world_rotation_matrix)
-    tvec_world = cam_rot.apply(object_tvec_cam.reshape(3,))
-    
-    return tvec_world, world_rvec, quat_world, rpy_world
-
-def project_vertices_to_image(vertices, camera_matrix, dist_coeffs):
-    """Project 3D vertices to 2D image coordinates"""
-    if len(vertices) == 0:
-        return np.array([])
-    
-    # Project points to image plane
-    projected_points, _ = cv2.projectPoints(
-        vertices.astype(np.float32), 
-        np.zeros((3, 1)),  # No rotation (already in camera frame)
-        np.zeros((3, 1)),  # No translation (already in camera frame)
-        camera_matrix, 
-        dist_coeffs
-    )
-    
-    return projected_points.reshape(-1, 2).astype(np.int32)
-
-def draw_wireframe(frame, projected_vertices, edges, color=(0, 255, 0), thickness=2):
-    """Draw wireframe on the image"""
-    if len(projected_vertices) == 0:
-        return
-    
-    # Filter out vertices that are outside the image bounds
-    height, width = frame.shape[:2]
-    valid_vertices = []
-    valid_indices = []
-    
-    for i, vertex in enumerate(projected_vertices):
-        x, y = vertex
-        if 0 <= x < width and 0 <= y < height:
-            valid_vertices.append(vertex)
-            valid_indices.append(i)
-    
-    if len(valid_vertices) == 0:
-        return
-    
-    # Create mapping from original indices to valid indices
-    index_map = {orig_idx: new_idx for new_idx, orig_idx in enumerate(valid_indices)}
-    
-    # Draw edges
-    for edge in edges:
-        if len(edge) >= 2:
-            start_idx, end_idx = edge[0], edge[1]
-            if start_idx in index_map and end_idx in index_map:
-                start_point = tuple(valid_vertices[index_map[start_idx]])
-                end_point = tuple(valid_vertices[index_map[end_idx]])
-                cv2.line(frame, start_point, end_point, color, thickness)
-    
-    # Draw vertices as small circles
-    for vertex in valid_vertices:
-        cv2.circle(frame, tuple(vertex), 3, (255, 0, 0), -1)
 
 def estimate_pose_with_kalman(frame, corners, ids, camera_matrix, dist_coeffs, marker_size,
                              kalman_filters, marker_stabilities, last_seen_frames, current_frame):
