@@ -13,6 +13,7 @@ from scipy.spatial.transform import Rotation
 
 from shared.fastapi_utils import get_data_dir as _get_data_dir
 
+from ..core.wireframe import build_wireframe
 from ..models.marker import MarkerData
 from ..models.session import session_state
 from ..utils.aruco_utils import ArUcoGenerator
@@ -146,78 +147,73 @@ async def export_wireframe():
         )
 
     try:
-        mesh = session_state.mesh
-        vertices = np.asarray(mesh.vertices)
-        triangles = np.asarray(mesh.triangles)
-
-        edges = []
-        for triangle in triangles:
-            for i in range(3):
-                v1, v2 = triangle[i], triangle[(i + 1) % 3]
-                edge = tuple(sorted([int(v1), int(v2)]))
-                edges.append(edge)
-
-        unique_edges = []
-        seen = set()
-        for edge in edges:
-            if edge not in seen:
-                unique_edges.append(edge)
-                seen.add(edge)
-
-        mesh_info = {
-            "num_vertices": len(vertices),
-            "num_edges": len(unique_edges),
-            "num_triangles": len(triangles),
-            "bounding_box": {
-                "min": vertices.min(axis=0).tolist(),
-                "max": vertices.max(axis=0).tolist(),
-                "center": vertices.mean(axis=0).tolist(),
-                "size": (vertices.max(axis=0) - vertices.min(axis=0)).tolist(),
-            },
-            "has_normals": mesh.has_vertex_normals(),
-            "has_colors": mesh.has_vertex_colors(),
-            "is_watertight": mesh.is_watertight(),
-            "is_orientable": mesh.is_orientable(),
-        }
-
-        wireframe_data = {
-            "mesh_info": mesh_info,
-            "vertices": vertices.tolist(),
-            "edges": [[int(edge[0]), int(edge[1])] for edge in unique_edges],
-            "format": "vector_relation",
-            "description": "Wireframe data with vertices and edge connections",
-        }
-
-        json_str = json.dumps(wireframe_data, indent=2)
+        wireframe_data = build_wireframe(session_state.mesh)
         object_name = Path(current_file).stem
-
-        data_dir = get_data_dir()
-        wireframe_dir = data_dir / "wireframe"
-        wireframe_dir.mkdir(parents=True, exist_ok=True)
-        wireframe_file = wireframe_dir / f"{object_name}_wireframe.json"
-
-        try:
-            with open(wireframe_file, "w") as f:
-                f.write(json_str)
-        except Exception as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Error saving wireframe to {wireframe_file}: {str(e)}",
-            )
-
-        wireframe_filename = f"{object_name}_wireframe.json"
-        return Response(
-            content=json_str,
-            media_type="application/json",
-            headers={
-                "Content-Disposition": f"attachment; filename={wireframe_filename}"
-            },
-        )
+        return _save_and_return_wireframe(object_name, wireframe_data)
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f"Failed to export wireframe: {str(e)}"
+        )
+
+
+def _save_and_return_wireframe(object_name: str, wireframe_data: dict) -> Response:
+    """Write the wireframe JSON to data/wireframe/ and return it as a download."""
+    json_str = json.dumps(wireframe_data, indent=2)
+
+    wireframe_dir = get_data_dir() / "wireframe"
+    wireframe_dir.mkdir(parents=True, exist_ok=True)
+    wireframe_file = wireframe_dir / f"{object_name}_wireframe.json"
+    try:
+        with open(wireframe_file, "w") as f:
+            f.write(json_str)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error saving wireframe to {wireframe_file}: {str(e)}",
+        )
+
+    return Response(
+        content=json_str,
+        media_type="application/json",
+        headers={
+            "Content-Disposition": f"attachment; filename={object_name}_wireframe.json"
+        },
+    )
+
+
+@router.get("/export-wireframe/{object_name}")
+async def export_wireframe_for_object(object_name: str):
+    """Generate wireframe directly from a CAD model by name (headless; no UI session).
+
+    Loads data/models/{object_name}.{obj,stl,ply}, builds the wireframe, writes it to
+    data/wireframe/, and returns it. This is the orchestrator-ready wireframe stage.
+    """
+    from ..core.cad_loader import CADLoader
+
+    models_dir = get_data_dir() / "models"
+    mesh_path = None
+    for ext in (".obj", ".stl", ".ply"):
+        candidate = models_dir / f"{object_name}{ext}"
+        if candidate.exists():
+            mesh_path = candidate
+            break
+    if mesh_path is None:
+        raise HTTPException(
+            status_code=404, detail=f"No CAD model found for {object_name}"
+        )
+
+    try:
+        mesh = CADLoader().load_file(mesh_path, input_units="auto")
+        wireframe_data = build_wireframe(mesh)
+        return _save_and_return_wireframe(object_name, wireframe_data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to generate wireframe for {object_name}: {str(e)}",
         )
 
 
