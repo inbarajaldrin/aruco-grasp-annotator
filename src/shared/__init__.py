@@ -8,6 +8,7 @@ that are reused across multiple applications in the project.
 from .fastapi_utils import (
     create_app,
     add_cors_middleware,
+    make_app,
     get_data_dir,
     find_available_port,
     run_server,
@@ -29,6 +30,7 @@ __all__ = [
     # FastAPI utilities
     "create_app",
     "add_cors_middleware",
+    "make_app",
     "get_data_dir",
     "find_available_port",
     "run_server",

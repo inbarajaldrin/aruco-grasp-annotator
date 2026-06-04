@@ -7,11 +7,14 @@ CORS configuration, data directory resolution, and server startup.
 
 import socket
 from pathlib import Path
-from typing import Optional
+from typing import Iterable, Optional
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 
 
 def create_app(
@@ -69,6 +72,63 @@ def get_data_dir(app_file: str) -> Path:
     app_dir = Path(app_file).parent
     project_root = app_dir.parent.parent
     return project_root / "data"
+
+
+def make_app(
+    *,
+    title: str,
+    description: str,
+    routers: Iterable,
+    app_file: str,
+    version: str = "1.0.0",
+    mount_shared_static: bool = True,
+) -> FastAPI:
+    """
+    Build a fully-wired FastAPI application.
+
+    Absorbs the bootstrap that was duplicated across every app's ``app.py``:
+    CORS, static mounts, Jinja2 templates, the standard ``index.html`` root
+    handler, and router registration.
+
+    Args:
+        title: Application title.
+        description: Application description.
+        routers: Iterable of ``APIRouter`` to include, in order.
+        app_file: The calling module's ``__file__``; used to resolve the app
+            directory and its ``static``/``templates`` subdirectories.
+        version: Application version (default: "1.0.0").
+        mount_shared_static: Also mount ``../shared/static`` at ``/static/shared``.
+            Mounted BEFORE ``/static`` so that ``/static/shared/*`` resolves to the
+            shared mount (Starlette matches mounts by prefix, in order).
+
+    Returns:
+        The configured FastAPI application.
+    """
+    app = create_app(title=title, description=description, version=version)
+    add_cors_middleware(app)
+
+    app_dir = Path(app_file).parent
+    shared_dir = app_dir.parent / "shared"
+
+    if mount_shared_static:
+        app.mount(
+            "/static/shared",
+            StaticFiles(directory=shared_dir / "static"),
+            name="shared_static",
+        )
+    app.mount("/static", StaticFiles(directory=app_dir / "static"), name="static")
+
+    templates = Jinja2Templates(directory=app_dir / "templates")
+
+    for router in routers:
+        app.include_router(router)
+
+    @app.get("/", response_class=HTMLResponse)
+    async def read_root(request: Request):
+        """Serve the main web interface."""
+        return templates.TemplateResponse("index.html", {"request": request})
+
+    return app
 
 
 def find_available_port(start_port: int = 8000, max_attempts: int = 100) -> int:
