@@ -5,6 +5,8 @@ Provides common setup patterns for FastAPI applications including
 CORS configuration, data directory resolution, and server startup.
 """
 
+import atexit
+import os
 import socket
 from pathlib import Path
 from typing import Iterable, Optional
@@ -188,5 +190,16 @@ def run_server(
     print("   Mouse wheel: zoom")
     print("   Right-click + drag: rotate")
     print("   Middle-click + drag: pan")
+
+    # Record this running app so the agent CLI can discover it (ports are dynamic).
+    # Best-effort: never let registry issues block the server. The host stored is
+    # always loopback because the agent CLI only ever connects locally.
+    try:
+        from . import agent_registry
+
+        agent_registry.register(display_name, port=port, host="127.0.0.1", pid=os.getpid())
+        atexit.register(agent_registry.unregister, display_name)
+    except Exception as exc:  # pragma: no cover - registry is non-critical
+        print(f"(agent registry unavailable: {exc})")
 
     uvicorn.run(app, host=host, port=port)
