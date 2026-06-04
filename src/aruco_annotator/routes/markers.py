@@ -2,7 +2,6 @@
 
 import json
 import warnings
-from typing import Any
 
 import numpy as np
 from fastapi import APIRouter, Body, HTTPException
@@ -13,30 +12,33 @@ from ..models.marker import MarkerData
 from ..models.session import session_state
 from ..services.marker_service import marker_to_json
 from ..services.mesh_service import determine_face_type, group_triangles_by_face
+from .models import AddMarkerConfig, RotationUpdate, SwapRequest, TranslationUpdate
 
 router = APIRouter(prefix="/api")
 
 
 @router.post("/add-marker")
-async def add_marker(config: dict[str, Any]):
+async def add_marker(config: AddMarkerConfig):
     """Add an ArUco marker at specified position."""
     if session_state.mesh is None:
         raise HTTPException(status_code=400, detail="No model loaded")
 
     try:
-        dictionary = config.get("dictionary", "DICT_4X4_50")
-        aruco_marker_id = config.get("aruco_id", session_state.next_marker_id)
-        size = config.get("size", 0.021)
-        border_width = config.get("border_width", 0.05)
-
-        pos_data = config.get("position", {})
-        normal_data = config.get("normal", {"x": 0, "y": 0, "z": 1})
+        dictionary = config.dictionary
+        # Mirror dict.get semantics: use the dynamic default only when the key was
+        # absent (an explicitly supplied null/None is preserved as before).
+        if "aruco_id" in config.model_fields_set:
+            aruco_marker_id = config.aruco_id
+        else:
+            aruco_marker_id = session_state.next_marker_id
+        size = config.size
+        border_width = config.border_width
 
         position_world = np.array(
-            [pos_data.get("x", 0), pos_data.get("y", 0), pos_data.get("z", 0)]
+            [config.position.x, config.position.y, config.position.z]
         )
         normal_world = np.array(
-            [normal_data.get("x", 0), normal_data.get("y", 0), normal_data.get("z", 1)]
+            [config.normal.x, config.normal.y, config.normal.z]
         )
 
         cad_info = session_state.cad_object_info
@@ -143,7 +145,7 @@ async def clear_all_markers():
 
 @router.patch("/markers/{marker_id}/rotation")
 async def update_marker_rotation(
-    marker_id: int, rotation: dict[str, Any] = Body(...)
+    marker_id: int, rotation: RotationUpdate = Body(...)
 ):
     """Update marker in-plane rotation."""
     marker_id = int(marker_id)
@@ -156,13 +158,13 @@ async def update_marker_rotation(
         )
 
     marker = session_state.markers[marker_id]
-    mode = rotation.get("mode", "relative")
+    mode = rotation.mode
 
     if mode == "absolute":
-        yaw_deg = float(rotation.get("yaw", 0))
+        yaw_deg = float(rotation.yaw)
         marker.set_in_plane_rotation(yaw_deg)
     else:
-        yaw_delta_deg = float(rotation.get("yaw", 0))
+        yaw_delta_deg = float(rotation.yaw)
         new_rotation_deg = marker.in_plane_rotation_deg + yaw_delta_deg
         marker.set_in_plane_rotation(new_rotation_deg)
 
@@ -203,7 +205,7 @@ async def update_marker_rotation(
 
 @router.patch("/markers/{marker_id}/translation")
 async def update_marker_translation(
-    marker_id: int, translation: dict[str, Any] = Body(...)
+    marker_id: int, translation: TranslationUpdate = Body(...)
 ):
     """Update marker position by translating in-plane."""
     if marker_id not in session_state.markers:
@@ -211,9 +213,9 @@ async def update_marker_translation(
 
     marker = session_state.markers[marker_id]
 
-    mode = translation.get("mode", "relative")
-    x_delta = float(translation.get("x", 0.0))
-    y_delta = float(translation.get("y", 0.0))
+    mode = translation.mode
+    x_delta = float(translation.x)
+    y_delta = float(translation.y)
 
     R_base = marker.base_rotation_matrix
     marker_x_axis = R_base[:, 0]
@@ -260,10 +262,10 @@ async def update_marker_translation(
 
 
 @router.post("/markers/swap")
-async def swap_marker_positions(swap_data: dict[str, Any]):
+async def swap_marker_positions(swap_data: SwapRequest):
     """Swap ArUco IDs between two markers."""
-    marker1_id = swap_data.get("marker1_id")
-    marker2_id = swap_data.get("marker2_id")
+    marker1_id = swap_data.marker1_id
+    marker2_id = swap_data.marker2_id
 
     if marker1_id is None:
         raise HTTPException(status_code=400, detail="marker1_id is missing")

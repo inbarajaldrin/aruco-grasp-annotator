@@ -14,9 +14,15 @@ router = APIRouter(prefix="/api")
 
 
 async def _add_marker_internal(config: dict[str, Any]):
-    """Internal function to add a marker. Imports at call time to avoid circular imports."""
+    """Internal function to add a marker. Imports at call time to avoid circular imports.
+
+    The place_* handlers assemble a plain dict; convert it to the typed body that
+    add_marker now expects (nested position/normal dicts coerce to their models).
+    """
     from .markers import add_marker
-    return await add_marker(config)
+    from .models import AddMarkerConfig
+
+    return await add_marker(AddMarkerConfig(**config))
 
 
 @router.get("/faces")

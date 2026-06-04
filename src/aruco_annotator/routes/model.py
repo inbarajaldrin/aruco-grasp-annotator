@@ -11,6 +11,7 @@ from scipy.spatial.transform import Rotation
 from ..core.cad_loader import CADLoader
 from ..models.session import session_state
 from ..utils.aruco_utils import ArUcoGenerator
+from .models import CadPose
 
 router = APIRouter(prefix="/api")
 
@@ -144,23 +145,20 @@ async def get_cad_pose():
 
 
 @router.post("/cad-pose")
-async def update_cad_pose(pose_data: dict):
+async def update_cad_pose(pose_data: CadPose):
     """Update the CAD object pose."""
     if session_state.cad_object_info is None:
         raise HTTPException(status_code=400, detail="No CAD model loaded")
 
-    position_data = pose_data.get("position", {})
-    rotation_data = pose_data.get("rotation", {})
-
     position = [
-        float(position_data.get("x", 0.0)),
-        float(position_data.get("y", 0.0)),
-        float(position_data.get("z", 0.0)),
+        float(pose_data.position.x),
+        float(pose_data.position.y),
+        float(pose_data.position.z),
     ]
 
-    roll = float(rotation_data.get("roll", 0.0))
-    pitch = float(rotation_data.get("pitch", 0.0))
-    yaw = float(rotation_data.get("yaw", 0.0))
+    roll = float(pose_data.rotation.roll)
+    pitch = float(pose_data.rotation.pitch)
+    yaw = float(pose_data.rotation.yaw)
 
     rot_scipy = Rotation.from_euler(
         "xyz", [np.deg2rad(roll), np.deg2rad(pitch), np.deg2rad(yaw)]
