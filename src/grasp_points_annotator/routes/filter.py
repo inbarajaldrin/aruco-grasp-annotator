@@ -3,16 +3,16 @@
 import base64
 import json
 from pathlib import Path
-from typing import Any
 
 import cv2
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, HTTPException
 
 from shared.fastapi_utils import get_data_dir
 
 from ..core.pipeline import CADToGraspPipeline
 from ..utils.grasp_filter import GraspFilter
 from ..utils.region_detector import visualize_center_points_only
+from .models import FilterRequest
 
 router = APIRouter(prefix="/api")
 
@@ -23,23 +23,23 @@ OUTPUTS_DIR.mkdir(exist_ok=True)
 
 
 @router.post("/filter")
-async def filter_grasp_points(data: dict[str, Any] = Body(...)):
+async def filter_grasp_points(data: FilterRequest):
     """
     Filter grasp points based on gripper constraints.
     Updates the grasp points file with only the filtered grasp points.
     """
     try:
-        object_name = data.get("object_name")
-        marker_id = data.get("marker_id")
+        object_name = data.object_name
+        marker_id = data.marker_id
 
         # Filter parameters (with defaults from grasp_filter.py)
-        gripper_max_width_mm = data.get("gripper_max_width_mm", 100.0)
-        grasp_clearance_mm = data.get("grasp_clearance_mm", 14.0)
-        gripper_tip_thickness_mm = data.get("gripper_tip_thickness_mm", 20.0)
-        max_gap_px = data.get("max_gap_px", 20)
-        symmetry_tolerance_mm = data.get("symmetry_tolerance_mm", 10.0)
-        check_x_axis = data.get("check_x_axis", True)
-        check_y_axis = data.get("check_y_axis", True)
+        gripper_max_width_mm = data.gripper_max_width_mm
+        grasp_clearance_mm = data.grasp_clearance_mm
+        gripper_tip_thickness_mm = data.gripper_tip_thickness_mm
+        max_gap_px = data.max_gap_px
+        symmetry_tolerance_mm = data.symmetry_tolerance_mm
+        check_x_axis = data.check_x_axis
+        check_y_axis = data.check_y_axis
 
         if not object_name or marker_id is None:
             raise HTTPException(status_code=400, detail="object_name and marker_id are required")

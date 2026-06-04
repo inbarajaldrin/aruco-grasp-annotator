@@ -2,11 +2,12 @@
 
 import json
 from pathlib import Path
-from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
 from shared.fastapi_utils import get_data_dir as _get_data_dir
+
+from .models import ExportSymmetryRequest
 
 router = APIRouter(prefix="/api")
 
@@ -37,10 +38,10 @@ async def get_symmetry(object_name: str):
 
 
 @router.post("/export-symmetry")
-async def export_symmetry(data: dict[str, Any]):
+async def export_symmetry(data: ExportSymmetryRequest):
     """Export fold symmetry data to a JSON file in the data/symmetry folder."""
-    object_name = data.get("object_name")
-    fold_axes = data.get("fold_axes", {})
+    object_name = data.object_name
+    fold_axes = data.fold_axes
 
     if not object_name:
         raise HTTPException(status_code=400, detail="object_name is required")

@@ -3,16 +3,16 @@
 import base64
 import json
 from pathlib import Path
-from typing import Any
 
 import cv2
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, HTTPException
 
 from shared.fastapi_utils import get_data_dir
 
 from ..core.annotation_transformer import annotate_grasp_points_to_all_markers
 from ..core.pipeline import CADToGraspPipeline
 from ..utils.region_detector import visualize_center_points_only
+from .models import Step1Request, Step2Request
 
 router = APIRouter(prefix="/api/pipeline")
 
@@ -23,17 +23,17 @@ OUTPUTS_DIR.mkdir(exist_ok=True)
 
 
 @router.post("/step1")
-async def run_step1(data: dict[str, Any] = Body(...)):
+async def run_step1(data: Step1Request):
     """
     Run Step 1: CAD to Grasp Points.
     Renders top-down view and detects grasp points.
     """
     try:
-        object_name = data.get("object_name")
-        marker_id = data.get("marker_id")
-        camera_distance = data.get("camera_distance", 0.5)
-        min_area_threshold = data.get("min_area_threshold", 1000)
-        use_mtl_color = data.get("use_mtl_color", False)
+        object_name = data.object_name
+        marker_id = data.marker_id
+        camera_distance = data.camera_distance
+        min_area_threshold = data.min_area_threshold
+        use_mtl_color = data.use_mtl_color
 
         if not object_name or marker_id is None:
             raise HTTPException(status_code=400, detail="object_name and marker_id are required")
@@ -84,15 +84,15 @@ async def run_step1(data: dict[str, Any] = Body(...)):
 
 
 @router.post("/step2")
-async def run_step2(data: dict[str, Any] = Body(...)):
+async def run_step2(data: Step2Request):
     """
     Run Step 2: Transform to All Markers.
     Transforms grasp points from source marker to all markers.
     """
     try:
-        object_name = data.get("object_name")
-        source_marker_id = data.get("source_marker_id")
-        object_thickness = data.get("object_thickness", None)
+        object_name = data.object_name
+        source_marker_id = data.source_marker_id
+        object_thickness = data.object_thickness
 
         if not object_name or source_marker_id is None:
             raise HTTPException(status_code=400, detail="object_name and source_marker_id are required")
