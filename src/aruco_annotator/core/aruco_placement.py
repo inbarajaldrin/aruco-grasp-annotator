@@ -213,40 +213,24 @@ def _assemble_record(object_name, suffix, dictionary, size, border_width, center
     return record
 
 
-def generate_prismatic_aruco(
-    mesh_path: str | Path,
-    object_name: str,
-    *,
-    size: float | None = None,
-    border_width: float = 0.05,
-    dictionary: str = "DICT_4X4_50",
-    id_base: int = 0,
-    min_support: float = DEFAULT_MIN_SUPPORT,
-) -> dict[str, Any]:
-    """Seating-aware ArUco placement: a marker per face, slid to a seated corner if needed."""
-    from ..core.cad_loader import CADLoader
-    from ..models.marker import MarkerData
+# A marker is "fully seated" (flush) at or above this support fraction.
+_FULL_SEAT = 0.999
+
+
+def _place_faces(scene, bbox_min, bbox_max, center, size, min_support):
+    """Place one marker per primary face (slide-to-seat).
+
+    Returns (placed, skipped): placed = [(face_type, normal, position, support)];
+    skipped = [{face_type, reason}]. Faces where the marker can't fit or seat are skipped
+    (this is what drops a hex's angled ±x sides and a too-small facet automatically).
+    """
     from ..services.mesh_service import determine_face_type
 
-    loader = CADLoader()
-    mesh = loader.load_file(Path(mesh_path), input_units="auto")
-    mesh_info = loader.get_mesh_info(mesh)
-    scene = _build_raycasting_scene(mesh)
-
-    bbox_min = np.array(mesh_info["bbox_min"])
-    bbox_max = np.array(mesh_info["bbox_max"])
-    center = (bbox_min + bbox_max) / 2.0
-    if size is None:
-        size = fit_marker_size(bbox_min, bbox_max)
     half_mk = size / 2.0
-
-    markers: list[dict[str, Any]] = []
-    skipped: list[dict[str, Any]] = []
-
+    placed, skipped = [], []
     for normal_list, n_idx, sign, u_idx, v_idx in _FACES:
         normal = np.array(normal_list)
-        u_axis = np.eye(3)[u_idx]
-        v_axis = np.eye(3)[v_idx]
+        u_axis, v_axis = np.eye(3)[u_idx], np.eye(3)[v_idx]
         face_type = determine_face_type(tuple(normal))
         half_u = float(bbox_max[u_idx] - bbox_min[u_idx]) / 2.0
         half_v = float(bbox_max[v_idx] - bbox_min[v_idx]) / 2.0
@@ -257,20 +241,68 @@ def generate_prismatic_aruco(
 
         face_center = center.copy()
         face_center[n_idx] = bbox_max[n_idx] if sign > 0 else bbox_min[n_idx]
-
-        placed = _find_seat(
+        pos = _find_seat(
             scene, face_center, normal, u_axis, v_axis,
             half_u, half_v, half_mk, size, min_support=min_support,
         )
-        if placed is None:
+        if pos is None:
             skipped.append({"face_type": face_type, "reason": "no seated position found"})
             continue
+        sup = support_fraction(scene, pos, normal, u_axis, v_axis, size)
+        placed.append((face_type, normal, pos, sup))
+    return placed, skipped
 
-        markers.append(
-            _marker_entry(id_base + len(markers), dictionary, size, border_width,
-                          placed, normal, face_type, center)
-        )
 
+def _choose_size(scene, bbox_min, bbox_max, center, min_support) -> float:
+    """Largest printable size that maximises the number of fully-seated faces.
+
+    Box/U/board keep 21 mm (it seats every face flush); a small-facet hex drops to the
+    largest size that still sits flush on its facets (7 mm), reproducing the hand value.
+    """
+    best_size, best_count = PRINTABLE_SIZES_M[-1], -1
+    for s in PRINTABLE_SIZES_M:  # largest first, so ties keep the larger size
+        placed, _ = _place_faces(scene, bbox_min, bbox_max, center, s, min_support)
+        n_full = sum(1 for *_rest, sup in placed if sup >= _FULL_SEAT)
+        if n_full > best_count:
+            best_count, best_size = n_full, s
+    return best_size
+
+
+def generate_prismatic_aruco(
+    mesh_path: str | Path,
+    object_name: str,
+    *,
+    size: float | None = None,
+    border_width: float = 0.05,
+    dictionary: str = "DICT_4X4_50",
+    id_base: int = 0,
+    min_support: float = DEFAULT_MIN_SUPPORT,
+) -> dict[str, Any]:
+    """Seating-aware ArUco placement: one marker per primary face, slid to a seated spot.
+
+    If ``size`` is None, pick the largest printable size that maximises the number of
+    fully-seated faces (21 mm for box/U/board; smaller for small facets, e.g. 7 mm for a
+    hex). This makes the hexagonal peg fall out of the same rule — no special-casing.
+    """
+    from ..core.cad_loader import CADLoader
+
+    loader = CADLoader()
+    mesh = loader.load_file(Path(mesh_path), input_units="auto")
+    mesh_info = loader.get_mesh_info(mesh)
+    scene = _build_raycasting_scene(mesh)
+
+    bbox_min = np.array(mesh_info["bbox_min"])
+    bbox_max = np.array(mesh_info["bbox_max"])
+    center = (bbox_min + bbox_max) / 2.0
+
+    if size is None:
+        size = _choose_size(scene, bbox_min, bbox_max, center, min_support)
+
+    placed_faces, skipped = _place_faces(scene, bbox_min, bbox_max, center, size, min_support)
+    markers = [
+        _marker_entry(id_base + i, dictionary, size, border_width, pos, normal, face_type, center)
+        for i, (face_type, normal, pos, _sup) in enumerate(placed_faces)
+    ]
     return _assemble_record(
         object_name, Path(mesh_path).suffix, dictionary, size, border_width,
         center, mesh_info["dimensions"], markers, skipped,
@@ -348,6 +380,6 @@ def generate_aruco_for_object(
     """
     if comp_type == "board":
         return generate_board_aruco(mesh_path, object_name, **kwargs)
-    if subtype == "peg":
-        raise NotImplementedError(f"{object_name}: hex/peg placement not implemented yet")
+    # Everything else (block / socket / peg-hex) uses the prismatic placer; the seating
+    # test + auto size selection handle the hex's small angled facets without special-casing.
     return generate_prismatic_aruco(mesh_path, object_name, **kwargs)
