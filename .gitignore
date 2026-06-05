@@ -141,3 +141,6 @@ dmypy.json
 
 # Grasp Points - Generated outputs and temporary files
 src/grasp_points_annotator/outputs/
+
+# Session handoffs (local only)
+.local/
