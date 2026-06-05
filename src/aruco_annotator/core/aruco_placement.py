@@ -164,6 +164,55 @@ def _find_seat(
     return best_pos if best_sup >= min_support else None
 
 
+def _marker_entry(aruco_id, dictionary, size, border_width, position, normal, face_type, center):
+    """Build one marker record (with T_object_to_marker) via the real MarkerData math."""
+    from ..models.marker import MarkerData
+
+    marker = MarkerData(
+        aruco_id=aruco_id,
+        dictionary=dictionary,
+        size=size,
+        border_width=border_width,
+        position=tuple(position),
+        face_normal=tuple(normal),
+        face_type=face_type,
+    )
+    return {
+        "aruco_id": marker.aruco_id,
+        "face_type": marker.face_type,
+        "surface_normal": marker.face_normal.tolist(),
+        "T_object_to_marker": marker.get_T_object_to_marker(list(center)),
+    }
+
+
+def _assemble_record(object_name, suffix, dictionary, size, border_width, center, dimensions, markers, skipped):
+    """Build the data/aruco-schema record envelope shared by all placement rules."""
+    record = {
+        "exported_at": datetime.now().isoformat(),
+        "model_file": f"{object_name}{suffix}",
+        "total_markers": len(markers),
+        "aruco_dictionary": dictionary,
+        "size": size,
+        "border_width": border_width,
+        "cad_object_info": {
+            "center": list(center),
+            "dimensions": dimensions,
+            "position": [0.0, 0.0, 0.0],
+            "rotation": {
+                "roll": 0.0,
+                "pitch": 0.0,
+                "yaw": 0.0,
+                "quaternion": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0},
+            },
+        },
+        "markers": markers,
+        "notes": "T_object_to_marker is the complete transform from object center to marker.",
+    }
+    if skipped:
+        record["skipped_faces"] = skipped
+    return record
+
+
 def generate_prismatic_aruco(
     mesh_path: str | Path,
     object_name: str,
@@ -217,45 +266,88 @@ def generate_prismatic_aruco(
             skipped.append({"face_type": face_type, "reason": "no seated position found"})
             continue
 
-        marker = MarkerData(
-            aruco_id=id_base + len(markers),
-            dictionary=dictionary,
-            size=size,
-            border_width=border_width,
-            position=tuple(placed),
-            face_normal=tuple(normal),
-            face_type=face_type,
-        )
         markers.append(
-            {
-                "aruco_id": marker.aruco_id,
-                "face_type": marker.face_type,
-                "surface_normal": marker.face_normal.tolist(),
-                "T_object_to_marker": marker.get_T_object_to_marker(center.tolist()),
-            }
+            _marker_entry(id_base + len(markers), dictionary, size, border_width,
+                          placed, normal, face_type, center)
         )
 
-    record = {
-        "exported_at": datetime.now().isoformat(),
-        "model_file": f"{object_name}{Path(mesh_path).suffix}",
-        "total_markers": len(markers),
-        "aruco_dictionary": dictionary,
-        "size": size,
-        "border_width": border_width,
-        "cad_object_info": {
-            "center": center.tolist(),
-            "dimensions": mesh_info["dimensions"],
-            "position": [0.0, 0.0, 0.0],
-            "rotation": {
-                "roll": 0.0,
-                "pitch": 0.0,
-                "yaw": 0.0,
-                "quaternion": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0},
-            },
-        },
-        "markers": markers,
-        "notes": "T_object_to_marker is the complete transform from object center to marker.",
-    }
-    if skipped:
-        record["skipped_faces"] = skipped
-    return record
+    return _assemble_record(
+        object_name, Path(mesh_path).suffix, dictionary, size, border_width,
+        center, mesh_info["dimensions"], markers, skipped,
+    )
+
+
+def generate_board_aruco(
+    mesh_path: str | Path,
+    object_name: str,
+    *,
+    size: float | None = None,
+    border_width: float = 0.05,
+    dictionary: str = "DICT_4X4_50",
+    id_base: int = 0,
+    min_support: float = DEFAULT_MIN_SUPPORT,
+) -> dict[str, Any]:
+    """ArUco placement for a flat board: markers only on the top (+z) face, one at each
+    of the 4 corners (inset half a marker). A board lies flat, so only the top is ever
+    observed. Each corner is seating-checked against the (solid) plate.
+    """
+    from ..core.cad_loader import CADLoader
+    from ..services.mesh_service import determine_face_type
+
+    loader = CADLoader()
+    mesh = loader.load_file(Path(mesh_path), input_units="auto")
+    mesh_info = loader.get_mesh_info(mesh)
+    scene = _build_raycasting_scene(mesh)
+
+    bbox_min = np.array(mesh_info["bbox_min"])
+    bbox_max = np.array(mesh_info["bbox_max"])
+    center = (bbox_min + bbox_max) / 2.0
+    if size is None:
+        size = fit_marker_size(bbox_min, bbox_max)
+    half_mk = size / 2.0
+
+    normal = np.array([0.0, 0.0, 1.0])  # board is z-up; top = +z
+    u_axis, v_axis = np.eye(3)[0], np.eye(3)[1]
+    face_type = determine_face_type((0.0, 0.0, 1.0))
+    ou = max(0.0, float(bbox_max[0] - bbox_min[0]) / 2.0 - half_mk)
+    ov = max(0.0, float(bbox_max[1] - bbox_min[1]) / 2.0 - half_mk)
+
+    top_center = center.copy()
+    top_center[2] = bbox_max[2]
+
+    markers: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    for su, sv in ((-1, -1), (-1, 1), (1, 1), (1, -1)):  # 4 corners, counter-clockwise
+        pos = top_center + (su * ou) * u_axis + (sv * ov) * v_axis
+        if support_fraction(scene, pos, normal, u_axis, v_axis, size) < min_support:
+            skipped.append({"corner": [su, sv], "reason": "corner does not seat"})
+            continue
+        markers.append(
+            _marker_entry(id_base + len(markers), dictionary, size, border_width,
+                          pos, normal, face_type, center)
+        )
+
+    return _assemble_record(
+        object_name, Path(mesh_path).suffix, dictionary, size, border_width,
+        center, mesh_info["dimensions"], markers, skipped,
+    )
+
+
+def generate_aruco_for_object(
+    mesh_path: str | Path,
+    object_name: str,
+    *,
+    comp_type: str = "object",
+    subtype: str | None = None,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Dispatch to the right placement rule from the assembly config's type/subtype.
+
+    board -> top-face 4-corner; peg -> hex rule (not yet implemented); everything else
+    (block/socket) -> the prismatic slide-seat placer.
+    """
+    if comp_type == "board":
+        return generate_board_aruco(mesh_path, object_name, **kwargs)
+    if subtype == "peg":
+        raise NotImplementedError(f"{object_name}: hex/peg placement not implemented yet")
+    return generate_prismatic_aruco(mesh_path, object_name, **kwargs)
