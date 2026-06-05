@@ -28,7 +28,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from .markers import get_family, select_dictionary
+from .markers import dictionary_capacity, get_family, select_dictionary
 from .spec import StageResult
 
 _MODEL_EXTS = (".obj", ".stl", ".ply")
@@ -111,8 +111,15 @@ def stage_markers(
     family: str,
     border_width: float | None,
     skip_existing: bool = False,
+    only: set[str] | None = None,
+    dictionary: str | None = None,
 ) -> tuple[list[StageResult], str | None, int, list[str]]:
-    """Place markers for the whole assembly with contiguous IDs + an auto-selected dict.
+    """Place markers for the whole assembly with contiguous IDs + a chosen dictionary.
+
+    IDs + dictionary are ALWAYS computed over the full assembly (so a part resolves to its
+    real block). ``only`` restricts which files are written (option A: single-object regen
+    keeps correct assembly-global IDs); results are reported for the written set. ``dictionary``
+    overrides the auto-selection (validated to be a same-family dict that fits the total).
 
     Returns ``(results, chosen_dictionary, total_markers, warnings)``.
     """
@@ -172,18 +179,30 @@ def stage_markers(
             results.append(StageResult(stage="markers", object=name, status="fail", detail=str(exc)))
 
     total = id_base
-    # Pass 2: choose the dictionary that fits the assembly total, stamp + write.
-    chosen, warnings = select_dictionary(family, total)
+    # Pass 2: pick the dictionary (override or auto), stamp + write the requested subset.
+    if dictionary is not None:
+        cap = dictionary_capacity(family, dictionary)
+        if cap is None:
+            raise ValueError(f"{dictionary!r} is not a {family} dictionary")
+        if total > cap:
+            raise ValueError(f"{dictionary} holds {cap} IDs < {total} markers needed")
+        chosen, warnings = dictionary, []
+    else:
+        chosen, warnings = select_dictionary(family, total)
     for name, record in records.items():
         record["aruco_dictionary"] = chosen
-        (out_dir / f"{name}_aruco.json").write_text(json.dumps(record, indent=2))
+        if only is None or name in only:
+            (out_dir / f"{name}_aruco.json").write_text(json.dumps(record, indent=2))
+
+    if only is not None:
+        results = [r for r in results if r.object in only]
     return results, chosen, total, warnings
 
 
 # --- marker PNGs / PDFs (render from the marker JSON; family-agnostic via cv2.aruco) ---
 
 
-def stage_marker_pngs(asm_out: Path, *, family: str, skip_existing: bool = False) -> list[StageResult]:
+def stage_marker_pngs(asm_out: Path, *, family: str, skip_existing: bool = False, only: set[str] | None = None) -> list[StageResult]:
     import cv2
     from aruco_annotator.scripts.generate_aruco_png import ArUcoPNGGenerator
 
@@ -192,6 +211,8 @@ def stage_marker_pngs(asm_out: Path, *, family: str, skip_existing: bool = False
     results: list[StageResult] = []
     for json_file in sorted(json_dir.glob("*_aruco.json")):
         name = json_file.name[: -len("_aruco.json")]
+        if only is not None and name not in only:
+            continue
         out_dir = out_root / name
         if skip_existing and out_dir.exists() and any(out_dir.iterdir()):
             results.append(StageResult(stage="markers_png", object=name, status="skip", detail="exists"))
@@ -215,7 +236,7 @@ def stage_marker_pngs(asm_out: Path, *, family: str, skip_existing: bool = False
     return results
 
 
-def stage_marker_pdfs(asm_out: Path, *, family: str, skip_existing: bool = False) -> list[StageResult]:
+def stage_marker_pdfs(asm_out: Path, *, family: str, skip_existing: bool = False, only: set[str] | None = None) -> list[StageResult]:
     from aruco_annotator.scripts.generate_aruco_pdf import ArUcoPDFGenerator
 
     json_dir = asm_out / family
@@ -224,6 +245,8 @@ def stage_marker_pdfs(asm_out: Path, *, family: str, skip_existing: bool = False
     results: list[StageResult] = []
     for json_file in sorted(json_dir.glob("*_aruco.json")):
         name = json_file.name[: -len("_aruco.json")]
+        if only is not None and name not in only:
+            continue
         target = out_dir / f"{name}.pdf"
         if skip_existing and target.exists():
             results.append(StageResult(stage="markers_pdf", object=name, status="skip", detail="exists"))
@@ -298,7 +321,18 @@ def stage_grasp(
     *,
     family: str,
     skip_existing: bool = False,
+    only: set[str] | None = None,
+    marker_id_by_name: dict[str, int] | None = None,
+    thickness_by_name: dict[str, float] | None = None,
+    filter_params: dict[str, Any] | None = None,
 ) -> list[StageResult]:
+    """Detect + filter grasp candidates per non-board object.
+
+    ``marker_id_by_name`` picks the source marker per object (the approach axis, resolved by the
+    caller); ``thickness_by_name`` overrides the auto Z-thickness (axis-aware); ``filter_params``
+    carries the gripper config + which closing axes to check. All default to the backend's own
+    behaviour when omitted. ``only`` restricts which objects are processed.
+    """
     from grasp_points_annotator.core.grasp_pipeline import generate_grasp_points
 
     out_dir = asm_out / "grasp_points"
@@ -319,6 +353,8 @@ def stage_grasp(
 
         for comp in walk_order(components):
             name = comp["name"]
+            if only is not None and name not in only:
+                continue
             if is_board(comp):
                 results.append(StageResult(stage="grasp", object=name, status="skip", detail="board"))
                 continue
@@ -330,7 +366,12 @@ def stage_grasp(
                 results.append(StageResult(stage="grasp", object=name, status="skip", detail="no markers"))
                 continue
             try:
-                generate_grasp_points(name, data_dir=staging, outputs_dir=work)
+                generate_grasp_points(
+                    name, data_dir=staging, outputs_dir=work,
+                    marker_id=(marker_id_by_name or {}).get(name),
+                    object_thickness=(thickness_by_name or {}).get(name),
+                    filter_params=filter_params,
+                )
                 results.append(StageResult(stage="grasp", object=name, status="ok"))
             except Exception as exc:  # noqa: BLE001
                 results.append(StageResult(stage="grasp", object=name, status="fail", detail=str(exc)))

@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "aruco-pipeline": {
+      "command": "/Users/aldrininbaraj/Documents/Projects/untitled folder/agents/research/workspace/paper1/code/aruco-grasp-annotator/.venv/bin/python",
+      "args": [
+        "-m",
+        "pipeline.mcp_server"
+      ],
+      "env": {
+        "PYTHONPATH": "/Users/aldrininbaraj/Documents/Projects/untitled folder/agents/research/workspace/paper1/code/aruco-grasp-annotator/src",
+        "ARUCO_ASSETS_ROOT": "/Users/aldrininbaraj/Documents/Projects/untitled folder/agents/research/workspace/paper1/code/aruco-grasp-annotator/assets"
+      }
+    }
+  }
+}

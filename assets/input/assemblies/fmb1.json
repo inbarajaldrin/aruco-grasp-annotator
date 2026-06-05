@@ -1,0 +1,25 @@
+{
+  "assembly": "fmb1",
+  "parts": [
+    {
+      "name": "base1",
+      "assembly_order": 0
+    },
+    {
+      "name": "inverted_u_yellow",
+      "assembly_order": 4
+    },
+    {
+      "name": "u_brown",
+      "assembly_order": 1
+    },
+    {
+      "name": "u_orange",
+      "assembly_order": 2
+    },
+    {
+      "name": "line_green",
+      "assembly_order": 3
+    }
+  ]
+}

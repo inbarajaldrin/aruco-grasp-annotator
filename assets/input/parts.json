@@ -1,0 +1,59 @@
+{
+  "base1": {
+    "type": "board"
+  },
+  "inverted_u_yellow": {
+    "type": "object",
+    "subtype": "block"
+  },
+  "u_brown": {
+    "type": "object",
+    "subtype": "block"
+  },
+  "u_orange": {
+    "type": "object",
+    "subtype": "block"
+  },
+  "line_green": {
+    "type": "object",
+    "subtype": "block"
+  },
+  "base2": {
+    "type": "board"
+  },
+  "hex_blue": {
+    "type": "object",
+    "subtype": "peg"
+  },
+  "hex_red": {
+    "type": "object",
+    "subtype": "peg"
+  },
+  "inverted_u_brown": {
+    "type": "object",
+    "subtype": "socket"
+  },
+  "u_green": {
+    "type": "object",
+    "subtype": "block"
+  },
+  "base3": {
+    "type": "board"
+  },
+  "fork_orange": {
+    "type": "object",
+    "subtype": "block"
+  },
+  "fork_yellow": {
+    "type": "object",
+    "subtype": "block"
+  },
+  "line_brown": {
+    "type": "object",
+    "subtype": "block"
+  },
+  "line_red": {
+    "type": "object",
+    "subtype": "block"
+  }
+}

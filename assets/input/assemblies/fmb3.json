@@ -1,0 +1,25 @@
+{
+  "assembly": "fmb3",
+  "parts": [
+    {
+      "name": "base3",
+      "assembly_order": 0
+    },
+    {
+      "name": "fork_orange",
+      "assembly_order": 3
+    },
+    {
+      "name": "fork_yellow",
+      "assembly_order": 4
+    },
+    {
+      "name": "line_brown",
+      "assembly_order": 1
+    },
+    {
+      "name": "line_red",
+      "assembly_order": 2
+    }
+  ]
+}

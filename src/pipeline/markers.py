@@ -80,6 +80,14 @@ def get_family(name: str) -> MarkerFamily:
         ) from None
 
 
+def dictionary_capacity(family_name: str, dict_name: str) -> int | None:
+    """ID capacity of ``dict_name`` within ``family``, or None if it isn't in the family."""
+    for d, capacity in get_family(family_name).ladder:
+        if d == dict_name:
+            return capacity
+    return None
+
+
 def select_dictionary(family_name: str, total_markers: int) -> tuple[str, list[str]]:
     """Pick the smallest dictionary in ``family`` that holds ``total_markers`` IDs.
 

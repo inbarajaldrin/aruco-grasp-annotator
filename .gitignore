@@ -144,3 +144,6 @@ src/grasp_points_annotator/outputs/
 
 # Session handoffs (local only)
 .local/
+
+# generated pipeline outputs (assets/input is source, output is regenerable)
+assets/output/

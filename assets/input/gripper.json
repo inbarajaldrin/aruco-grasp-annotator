@@ -1,0 +1,6 @@
+{
+  "type": "parallel",
+  "max_width_mm": 100,
+  "clearance_mm": 14,
+  "tip_thickness_mm": 20
+}
