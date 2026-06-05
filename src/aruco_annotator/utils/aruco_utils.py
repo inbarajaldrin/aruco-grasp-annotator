@@ -28,23 +28,42 @@ class ArUcoGenerator:
         "DICT_7X7_100": cv2.aruco.DICT_7X7_100,
         "DICT_7X7_250": cv2.aruco.DICT_7X7_250,
         "DICT_7X7_1000": cv2.aruco.DICT_7X7_1000,
+        # AprilTag families (rendered through the same cv2.aruco path; the pipeline
+        # orchestrator selects DICT_APRILTAG_36h11 by default). Capacities live in
+        # _APRILTAG_CAPACITY below because the name's trailing token isn't a plain count.
+        "DICT_APRILTAG_16h5": cv2.aruco.DICT_APRILTAG_16h5,
+        "DICT_APRILTAG_25h9": cv2.aruco.DICT_APRILTAG_25h9,
+        "DICT_APRILTAG_36h10": cv2.aruco.DICT_APRILTAG_36h10,
+        "DICT_APRILTAG_36h11": cv2.aruco.DICT_APRILTAG_36h11,
     }
-    
+
+    # AprilTag family -> number of distinct IDs (their names encode bits/Hamming, not count).
+    _APRILTAG_CAPACITY = {
+        "DICT_APRILTAG_16h5": 30,
+        "DICT_APRILTAG_25h9": 35,
+        "DICT_APRILTAG_36h10": 2320,
+        "DICT_APRILTAG_36h11": 587,
+    }
+
     def __init__(self):
         self.detector = cv2.aruco.ArucoDetector()
-    
+
     @classmethod
     def get_available_dictionaries(cls) -> List[str]:
         """Get list of available ArUco dictionaries."""
         return list(cls.ARUCO_DICTS.keys())
-    
+
     @classmethod
     def get_max_id_for_dict(cls, dict_name: str) -> int:
         """Get maximum ID for a given dictionary."""
         if dict_name not in cls.ARUCO_DICTS:
             return 0
-        
-        # Extract the number from dictionary name (e.g., "DICT_4X4_50" -> 50)
+
+        # AprilTag families: capacity comes from the table (name isn't "..._<count>").
+        if dict_name in cls._APRILTAG_CAPACITY:
+            return cls._APRILTAG_CAPACITY[dict_name] - 1  # zero-based
+
+        # ArUco: extract the trailing count (e.g. "DICT_4X4_50" -> 50).
         parts = dict_name.split('_')
         if len(parts) >= 3:
             try:

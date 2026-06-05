@@ -33,8 +33,13 @@ class SimpleArUcoGenerator:
         "DICT_7X7_100": cv2.aruco.DICT_7X7_100,
         "DICT_7X7_250": cv2.aruco.DICT_7X7_250,
         "DICT_7X7_1000": cv2.aruco.DICT_7X7_1000,
+        # AprilTag families render through the identical cv2.aruco.generateImageMarker path.
+        "DICT_APRILTAG_16h5": cv2.aruco.DICT_APRILTAG_16h5,
+        "DICT_APRILTAG_25h9": cv2.aruco.DICT_APRILTAG_25h9,
+        "DICT_APRILTAG_36h10": cv2.aruco.DICT_APRILTAG_36h10,
+        "DICT_APRILTAG_36h11": cv2.aruco.DICT_APRILTAG_36h11,
     }
-    
+
     def __init__(self):
         self.detector = cv2.aruco.ArucoDetector()
     

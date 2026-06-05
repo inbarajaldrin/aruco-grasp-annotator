@@ -375,8 +375,9 @@ def generate_aruco_for_object(
 ) -> dict[str, Any]:
     """Dispatch to the right placement rule from the assembly config's type/subtype.
 
-    board -> top-face 4-corner; peg -> hex rule (not yet implemented); everything else
-    (block/socket) -> the prismatic slide-seat placer.
+    board -> top-face 4-corner; everything else (block/socket/peg-hex) -> the prismatic
+    slide-seat placer, whose seating test + auto size selection handle the hex's small
+    angled facets without special-casing (no separate "peg" rule is needed).
     """
     if comp_type == "board":
         return generate_board_aruco(mesh_path, object_name, **kwargs)

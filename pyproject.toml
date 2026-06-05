@@ -50,6 +50,7 @@ grasp-points-annotator = "grasp_points_annotator.main:main"
 symmetry-exporter = "symmetry_exporter.main:main"
 instruction-manual-generator = "instruction_manual_generator.main:main"
 aruco-agent = "shared.agent_cli:main"
+aruco-pipeline = "pipeline.cli:main"
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
