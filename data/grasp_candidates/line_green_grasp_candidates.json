@@ -1,5 +1,5 @@
 {
-  "object_name": "line_brown",
+  "object_name": "line_green",
   "schema_version": 2,
   "coordinate_frame": "cad_center",
   "gripper": {
@@ -23,8 +23,8 @@
       "width_mm": 39.8,
       "standoff_m": 0.115,
       "grasp_candidate_position": {
-        "x": -0.00010623046522960063,
-        "y": 0.00010623046522959913,
+        "x": 0.00010623046522960067,
+        "y": -0.00010623046522959908,
         "z": 0.0
       },
       "approach_quaternion": {
